@@ -54,12 +54,22 @@ editor_options:
 
 ## 2.1 Getting started with tidycensus
 
+1.  Below we install **tidycensus**
+
+2.  we load the **tidycensus** and **tidyverse** packages
+
+3.  We set the API key and store it in our .Renviron if we have not already done so
+
+    -   WARNING: Ensure that your API key is not stored in scripts, notebooks, or other output before sharing or pushing to public repositories; ideally, research the safe storage and calling of API keys and other "secrets" when writing code that you expect to share.
+
+    -   Once the **tidycensus** package installs the API key in your .Renviron, your local programming context should be good to go without re-running `tidycensus::census_api_key()`
+
 ```{r tidycensus-setup}
 # install and/or load tidycensus package and set API key
-#install.packages("tidycensus")
+#install.packages("tidycensus") # install and/or load tidycensus package 
 library(tidycensus)
 library(tidyverse)
-# census_api_key("insert api key here", install = TRUE)
+# census_api_key("insert api key here", install = TRUE) # set API key
 ```
 
 ### Decennial Census
