@@ -1,0 +1,603 @@
+---
+title: "Chapter 3 Notes"
+format: 
+  docx: 
+    toc: true
+    highlight-style: arrow
+editor: visual
+execute:
+  echo: fenced
+  error: true
+  output: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Chapter 3: Wrangling Census Data
+
+## 3.1 The Tidyverse
+
+-   Developed by community, esp. Wickham from RStudio/Posit
+
+-   Includes many packages - author emphasizes the following:
+
+    -   **readr** for import/export
+
+    -   **dplyr** for data wrangling
+
+    -   **tidyr** for reshaping data
+
+    -   **purrr** for functional programming
+
+    -   **ggplot2** data visualization usin the Grammar of Graphics
+
+    -   **stringr** string manipulation
+
+    -   **forcats** working with factors
+
+-   core data structure is the ***tibble*** (a tidy table) which is an enhanced variant of data frames.
+
+    -   **tidycensus** returns tibbles by default
+
+## 3.2 Exploring census data with tidyverse tools
+
+First, load the required packages
+
+```{r setup}
+library(tidycensus)
+library(tidyverse)
+```
+
+### Sorting and filtering data
+
+Suppose median age data from 2016-2020 ACS
+
+```{r}
+median_age <- get_acs(
+  geography = "county",
+  variables = "B01002_001",
+  year = 2020,
+  cache_table = TRUE
+)
+
+median_age
+```
+
+By default, printing a **tibble** shows the first 10 rows
+
+**`arrange()`** will let us sort data (to determine youngest and oldest):
+
+```{r}
+arrange(median_age, estimate)
+arrange(median_age, desc(estimate))
+```
+
+**dplyr's** `filter()` function can query within datasets (think SQL `WHERE` clause)
+
+```{r}
+filter(median_age, estimate >= 50)
+```
+
+-   `arrange()` and `filter()` operate on rows
+
+-   `separate()` from **tidyr** operates on columns
+
+```{r}
+    separate(
+      median_age,
+      NAME,
+      into = c("county", "state"),
+      sep = ", "
+    )
+```
+
+**NOTE:** "Many tidyverse functions use *non-standard evaluation* to refer to column names"
+
+-   This means you don't necessarily need to use quotes to references column names
+
+    -   This can make it difficult when you're writing your own functions, however.
+
+### Using summary variables and calculating new columns
+
+-   Data in Census and ACS tables are comprised of variables that that constitute sub-categories
+
+    -   i.e. numbers of households in different household income bands
+
+-   This data returns estimated counts
+
+    -   difficult to compare across geographies without normalizing
+
+-   So we **normalize** via dividing by an overall population that the sub-group is derived from.
+
+    -   Normalizing variables are frequently in ACS tables themselves.
+
+-   in ACS table B19001 (Household Income), variable `B19001_001` represents total number of households in enumeration unit
+
+-   `get_acs()` and `get_decennial()` both accept arguments for the parameter `summary_var` which creates columns for a summary variable useful for normalization.
+
+    ***Example: normalizing race and Hispanic origin against base population, Arizona***
+
+```{r}
+race_vars <- c(
+  White = "B03002_003",
+  Black = "B03002_004",
+  Native = "B03002_005",
+  Asian = "B03002_006",
+  HIPI = "B03002_007",
+  Hispanic = "B03002_012"
+)
+
+az_race <- get_acs(
+  geography = "county",
+  state = "AZ",
+  variables = race_vars,
+  summary_var = "B03002_001", # total pop
+  year = 2020,
+  cache_table = TRUE
+)
+
+az_race
+```
+
+-   We may then use **dplyr's** `mutate()` function to calculate a `percent` column
+
+    -   in the below example, we use `select()` to retain only the columns we want
+
+***Example: Normalized demo data for Arizona***
+
+```{r}
+az_race_percent <- az_race %>% 
+  mutate(percent = 100 * (estimate / summary_est)) %>% 
+  select(NAME, variable, percent)
+
+az_race_percent
+```
+
+## 3.3 Group-wise Census data analysis
+
+-   Author advocates for split-apply-combine data analysis, drawn from Wickham 2011
+
+    -   Identify groups in dataset for comparisons; split into one piece per group
+
+    -   apply function to each group (summarizing function, such as mean or maximum, etc)
+
+    -   combine back into dataset for comparison between groups
+
+-   The tidyverse implements split-apply-combine through `group_by()` from **dplyr**
+
+### ***Making Group-wise comparisons***
+
+-   Use `az_race_percent` created above
+
+    -   two columns for group definitions:
+
+        -   `NAME` representing county
+
+        -   `variable` representing racial or ethnic group
+
+    -   Identify largest racial or ethnic group in each county
+
+        -   Create new dataset `largest_group` by:
+
+            1.  taking `az_race_percent`, THEN
+            2.  `group_by()` `NAME`, THEN
+            3.  `filter()` by `percent == max(percent))`
+
+```{r}
+largest_group <- az_race_percent %>% 
+  group_by(NAME) %>% 
+  filter(percent == max(percent))
+
+largest_group
+```
+
+-   `group_by()` frequently paired with `summarize()`
+
+***Example: Median percentage for each racial/ethnic group across AZ counties***
+
+```{r}
+az_race_percent %>% 
+  group_by(variable) %>% 
+  summarize(median_pct = median(percent))
+```
+
+### Tabulating new groups
+
+Analysts may calculate new custom groups to address questions.
+
+Example: ACS table B19001 has households with hh income bucketed in different increments (bottom bucket is \< \$10K; top bucket is \>=200K )
+
+```{r}
+mn_hh_income <- get_acs(
+  geography = "county",
+  table = "B19001",
+  state = "MN",
+  year = 2016,
+  cache_table = TRUE
+)
+
+mn_hh_income
+```
+
+We want to make three income buckets: lt 35K, 35-75K, and 75K+
+
+-   first we transform the data set; remove `B19001_001` variable, or total count of households per county
+
+-   use `case_when()` to identify groups of variables for binning
+
+-   `case_when()` is used inside `mutate()` to create `incgroup` variable
+
+    -   The first condition is evaluated, and assigns the value `below35k` to all rows where `variable` \< `"B19001_008"`
+
+        -   That is, `B19001_002` (income less than \$10k) to `B19001_007` (income between 30K and 34,999).
+
+    -   The second condition is evaluated, and assigns the value `bw35kand75k` to all remaining rows where variables \< `"B19001_013"`
+
+        -   That is, `B19001_008` (income between 35K and 39,999) to `B19001_012` (income between 70K and 74,999)
+
+    -   The final condition takes "all other values" (represented by TRUE) and assigns the value `above75k`
+
+```{r}
+mn_hh_income_recode <- mn_hh_income %>% 
+  filter(variable != "B19001_001") %>% # return all values EXCEPT "B19001_001"
+  mutate(incgroup = case_when(
+    variable < "B19001_008" ~ "below35k", # find variable < "B19001_008", assign it "below35k"
+    variable < "B19001_013" ~ "bw35kand75k",
+    TRUE ~ "above75k"
+  ))
+
+mn_hh_income_recode
+```
+
+-   We may now do group-wise comparisons with the new groups
+
+```{r}
+mn_group_sums <- mn_hh_income_recode %>% 
+  group_by(GEOID, incgroup) %>% 
+  summarize(estimate = sum(estimate))
+
+mn_group_sums
+```
+
+## 3.4 Comparing ACS estimates over time
+
+Census data through the API only goes back to 2000. NHGIS goes back to 1790; covered later in book
+
+### Time Series Analysis cautions
+
+-   Geography changes over time.
+
+***Example: Oglala Lakota County, South Dakota***
+
+-   We get the 2020 data for Oglala Lakota County
+
+```{r}
+oglala_lakota_age <- get_acs(
+  geography = "county",
+  state = "SD",
+  county = "Oglala Lakota",
+  table = "B01001",
+  year = 2020,
+  cache_table = TRUE
+)
+
+oglala_lakota_age
+```
+
+-   We want to look at change over time, so we try to pull in 2010
+
+```{r}
+oglala_lakota_age_10 <- get_acs(
+  geography = "county",
+  state = "SD",
+  county = "Oglala Lakota",
+  table = "B01001",
+  year = 2010,
+  cache_table = TRUE
+)
+
+oglala_lakota_age_10
+```
+
+-   An error is returned, because Oglala Lakota County had a different name in 2010 - Shannon County.
+
+```{r}
+oglala_lakota_age_10 <-  get_acs(
+  geography = "county",
+  state = "SD",
+  county = "Shannon",
+  table = "B01001",
+  year = 2010,
+  cache_table = TRUE
+)
+
+oglala_lakota_age_10
+```
+
+-   The GEOID is different, as well - when a geographic entity changes its name, Census Bureau assigns a new GEOID.
+
+    -   [The Census updates Table and Geography Changes annually](https://www.census.gov/programs-surveys/acs/technical-documentation/table-and-geography-changes.html)
+
+-   Variable IDs can change as well
+
+    -   We look for residents 25+ age, with 4-year degrees or higher from 2019 ( `"DP02_0068P"`, here)
+
+```{r}
+co_college19 <- get_acs(
+  geography = "county",
+  variables = "DP02_0068P",
+  state = "CO",
+  survey = "acs1",
+  year = 2019
+)
+
+co_college19
+```
+
+-   We try the same query for 2018
+
+```{r}
+co_college18 <- get_acs(
+  geography = "county",
+  variables = "DP02_0068P",
+  state = "CO",
+  survey = "acs1",
+  year = 2018
+)
+
+co_college18
+```
+
+-   The values are VERY different, and not percentages.
+
+    -   variable IDs in acs Data Profile are *unique each year* and so should not be used for time-series analysis.
+
+### Preparing time-series ACS estimates
+
+-   safest option: use Comparison Profile Tables (1 year or 5 year)
+
+    -   allows for comparison of demo indicators over past 5 years for year given.
+
+    -   also has more variable harmonization - inflation-adjustments, etc.
+
+Example for accessing ACS Comparison Profile:
+
+```{r}
+ak_income_compare <- get_acs(
+  geography = "county",
+  variables = c(
+    income15 = "CP03_2015_062",
+    income20 = "CP03_2020_062"
+  ),
+  state = "AK",
+  year = 2020
+)
+
+ak_income_compare
+```
+
+-   from 2016-2020 ACS used for 2020, comparison year is 2015, which uses 2011-2015.
+
+#### iterating over ACS years with tidyverse tools
+
+-   using Detailed Tables is also a safer option - variable IDs remain consistent across years
+
+    -   pitfalls that still exist; variables may be removed or added from survey to survey.
+
+    -   Always check on data availability using `load_variables()` for planned years
+
+Revisit Colorado Bachelor Degrees:
+
+-   in Detailed Tables, "bachelor's degree or higher" is partitioned by sex and by attainment tiers in ACS table 15002
+
+-   We only need variables for populations 25+ with a 4 year or graduate degrees, by sex)
+
+    -   We'll pull only the variables we need
+
+```{r}
+college_vars <- c("B15002_015",
+                  "B15002_016",
+                  "B15002_017",
+                  "B15002_018",
+                  "B15002_032",
+                  "B15002_033",
+                  "B15002_034",
+                  "B15002_035")
+```
+
+-   We'll perform iteration using `purrr`'s `map_*()` functions
+
+    -   `map()` returns a list
+
+    -   `map_int()` returns an integer vector
+
+    -   `map_chr()` returns a character vector
+
+    -   `map_dfr()` iterates over an input, passes it to a function/process defined by the user, and row-binds the result to a data frame.
+
+```{r}
+years <- 2010:2019 # create year vector
+names(years) <- years # set vector names to vector values
+
+college_by_year <- map_dfr(years,
+                           ~{
+                             get_acs(
+                               geography = "county",
+                               variables = college_vars,
+                               state = "CO",
+                               summary_var = "B15002_001",
+                               survey = "acs1",
+                               year = .x)},
+                           .id = "year")
+```
+
+-   first argument, object to be iterated over
+
+-   second argument, formula (specified with `~` and enclosed in `{}` to be ran once for each element
+
+    -   `.x` is local variable; it is passed the element from the object in the first argument
+
+    -   once each run is performed, the result is combined in a single output dataframe
+
+-   third argument (optional), `.id` creates new column in data frame containing names from object in first argument
+
+We can review the result like so:
+
+```{r}
+college_by_year %>% 
+  arrange(NAME, variable, year)
+```
+
+-   note that table is in long/tidy form; we can pivot it to a wide table more suitable for display or interpretation in conventional forms
+
+```{r}
+college_by_year %>% 
+  group_by(NAME, year) %>% 
+  summarize(estimate = sum(estimate)) %>%
+  pivot_wider(id_cols = NAME,
+              names_from = year,
+              values_from = estimate)
+```
+
+-   Expanding on this, we can generate further wide tables of new variables, such as below where we compute a table with the (estimate) percentage of college educated population per county for each year.
+
+```{r}
+percent_college_by_year <- college_by_year %>% 
+  group_by(NAME, year) %>% 
+  summarize(numerator = sum(estimate),
+            denominator = first(summary_est)) %>% 
+  mutate(pct_college = 100 * (numerator / denominator)) %>% 
+  pivot_wider(id_cols = NAME,
+              names_from = year,
+              values_from = pct_college)
+
+percent_college_by_year
+```
+
+## 3.5 Handling Margins of Error in ACS
+
+-   MOEs are vital to account for when using ACS data
+
+    -   ACS is not a full population census - rather, estimates are generated from a sample
+
+    -   By default, Margins of Error are returned for 90% Confidence Level (CL)
+
+        -   A 90% CL means "we are 90 percent sure that the true value falls within a range defined by the estimate plus or minus the margin of error."
+
+    -   **tidycensus** will always return margin of error associated with the estimate
+
+    -   MOE CLs can be controlled via `moe_level` argument in `get_acs()`
+
+        -   MOE CL arguments are `90` (default) `95` and `99`, computed by Census Bureau formulas
+
+***Example: median household income by county, Rhode Island, 2020***
+
+The first call returns the 90% CI; the second call returns the 99% CI
+
+-   Note that stricter (higher) CIs result in larger margins of error
+
+```{r RI-moe90}
+get_acs(geography = "county",
+        state = "Rhode Island",
+        variables = "B19013_001",
+        year = 2020
+)
+
+get_acs(geography = "county",
+        state = "Rhode Island",
+        variables = "B19013_001",
+        year = 2020,
+        moe_level = 99)
+```
+
+### Calculating derived margins of error
+
+-   Smaller enumeration units or smaller populations tend to have larger margins of error
+
+    -   this may include MOEs that are larger than their respective estimates
+
+***Example: age groups by sex for 65+ pop, Census Tracts, Salt Lake County, Utah***
+
+Steps are as follows:
+
+1.  Generate a vector of variable IDs, named `vars`
+    1.  create two vectors of integers ranging 20-25 (first argument in `c()`, corresponds to Male variables), and from 44-49 (second argument in `c()`, corresponds to Female variables)
+    2.  `c()` merges these two vectors into a single integer vector
+    3.  Take the string prefix (for these variables, `"B01001_0")` and iteratively append the integers to the string using `paste0()` - concatenation without spaces
+
+```{r}
+vars <- paste0("B01001_0", c(20:25, 44:49))
+vars
+```
+
+2.  use `get_acs()` to get our Salt Lake County census tracts with data
+
+```{r}
+salt_lake <- get_acs(
+  geography = "tract",
+  variables = vars,
+  state = "Utah",
+  county = "Salt Lake",
+  year = 2020
+)
+```
+
+3.  Examine estimate and error in a specific Census tract
+
+```{r}
+example_tract <- salt_lake %>% 
+  filter(GEOID == "49035100100")
+
+example_tract %>% 
+  select(-NAME)
+```
+
+-   Note how many variables have estimates \< moe
+
+    -   Remember, the MOE value presented is a plus or minus value -
+
+        -   For the first value, Males between 65 and 66 years of age, the estimate is 11. the MOE is (plus or minus) 13.
+
+        -   This means that "we are 90 percent sure that the true population of Males between the age of 65 and 66 years of age in this Census Tract falls within a range between -2 and 24, with the estimate of 11"
+
+        -   This is problematic, because we can't have -2 65-66 year old people. ESRI's reading would have us cut off at 0; no negative numbers.
+
+NOTE: Colorado State Demography Office published a set of guidelines titled [Margins of Error and their Size](https://drive.google.com/uc?export=download&id=0B2oqdPZKJqK7bC1hYUxPNVVmRnM) which establishes the following guidelines:
+
+> -   Always consider the context and how the estimate will be used,
+>
+> -   Use with caution when the MOE is 20% to 50% of the estimate,
+>
+> -   If the MOE is larger than 50% of the estimate consider the range created by the MOE. In many cases a MOE larger than 50% of the estimate makes the estimate not usable or relevant. Other times a large MOE wont impact what the estimate is stating.
+
+-   All this to say, working with ACS data for small enumeration units is difficult and has pitfalls
+
+-   We may aggregate data to a suitable MOE
+
+    -   **tidycensus** has the following functions to use Census Bureau formulas for derived estimates:
+
+        -   `moe_sum()`: moe for a derived sum
+
+        -   `moe_product()`: moe for a derived product
+
+        -   `moe_ratio()`: moe for a derived ratio
+
+        -   `moe_prop()`: moe for a derived proportion
+
+***Example: hypothetical derived proportion MOE***
+
+-   We have an ACS variable (per conversation with author on github, "if there were an estimate of 25 people in a Census tract aged over 25 with a bachelor's degree (with a margin of error of 5 around the estimate)"
+
+-   We have the ACS total for that Census tract ("100 total people aged over 25 in that Census tract (with a margin of error of 3 around that estimate)"
+
+-   The derived proportion would be 25/100 = 0.25
+
+-   We can determine the MOE for the derived proportion of 0.25 via `moe_prop()` as such:
+
+```{r}
+moe_prop(25, 100, 5, 3)
+```
+
+-   we have a derived estimate of 25% of the people in this hypothetical census tract having a Bachelor's Degree, with a Margin of Error of 4.943%
+
+### Calculating Group-wise margins of error

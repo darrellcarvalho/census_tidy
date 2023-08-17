@@ -1,0 +1,520 @@
+---
+title: "Chapter 2 Notes"
+format: 
+  docx: 
+    toc: true
+    highlight-style: arrow
+editor: visual
+execute:
+  echo: fenced
+  error: true
+  output: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Chapter 2: An introduction to tidycensus
+
+**tidycensus** package has two goals:
+
+1.  make ***tidy*** census data
+2.  streamline the spatial data wrangling by including *geometry* requests
+
+**tidycensus** focuses on subset of Census data, via core functions:
+
+-   `get_decennial()` returns data from 2000, 2010, and 2020 Decennial Census APIs
+
+-   `get_acs()` returns data from American Community Survey
+
+    -   1-year back to 2005
+
+    -   5-year back to 2005-2009
+
+-   `get_estimates()` access population estimates apis for yearly estimates of population characteristics
+
+    -   geometries include:
+
+        -   state
+
+        -   county
+
+        -   metropolitan area
+
+    -   estimates:
+
+        -   births
+
+        -   deaths
+
+        -   migration rates
+
+-   `get_pums()` access Public Use Microdata Samples
+
+-   `get_flows()` Migration flows API access, including info
+
+## 2.1 Getting started with tidycensus
+
+```{r tidycensus-setup}
+# install and/or load tidycensus package and set API key
+#install.packages("tidycensus")
+library(tidycensus)
+library(tidyverse)
+# census_api_key("insert api key here", install = TRUE)
+```
+
+### Decennial Census
+
+`get_decennial()` function calls
+
+```{r get_decennial}
+total_pop_10 <- get_decennial(
+  geography = "state", # aggregate by state
+  variables = "P001001",
+  year = 2010 # year we want data for
+) 
+```
+
+-   pulls from Summary File 1 by default, using default argument `sumfile = "sf1"`
+
+-   Summary File 1 exists for 2000 and 2010 Censuses, and contains core demo info for Census Geographies
+
+-   Summary File 2 contains info on population range and housing units
+
+-   Summary File 3 and 4 contain the Long Form data for 2000; these data sets are in American Community Survey sets from 2005 onward
+
+### ACS
+
+`get_acs()` gets data from American Community Survey.
+
+ACS collects a lot more variables not included in the short form questionnaire of the decennial Census.
+
+```{r ACS}
+born_in_mexico <- get_acs(
+  geography = "state",
+  variables = "B05006_150",
+  year = 2020
+)
+born_in_mexico
+```
+
+If the year isn't specified, `get_acs()` defaults to most recent five-year ACS sample
+
+defaults to 5-year ACS, but can be changed to 1 year using `survey = "acs1"`
+
+```{r mexican-born-1yr}
+born_in_mexico_1yr <- get_acs(
+  geography = "state",
+  variables = "B05006_150",
+  survey = "acs1",
+  year = 2019
+)
+born_in_mexico_1yr
+```
+
+Variables from ACS detailed tables, data profiles, summary tables, comparison profile, and supplemental estimates are available through the function.
+
+-   auto-detects where to look based on variable name
+
+-   alternatively, supply table name to get data for all variables in table
+
+***Example: Table B01001 ( Sex by Age)***
+
+```{r B01001}
+age_table <- get_acs(
+  geography = "state",
+  table = "B01001",
+  year = 2020
+)
+age_table
+```
+
+## 2.2 Geography and variables in tidycensus
+
+`geography` parameter in `get_acs()` and \`get_decennial() requests data aggregated to common Census units
+
+-   Census blocks are only available in `get_decennial()`
+
+-   Only geographies available in 2000 are `"state"`, `"county"`, `"county subdivision"`, `"tract"`, `"block group"`, and `"place"`
+
+-   the geographies have to be typed exactly per the table in the documentation
+
+    -   core-based statistical areas and zip code tabulation areas have `"cbsa"` and `"zcta"` as aliases
+
+```{r cbsa-demo}
+cbsa_population <- get_acs(
+  geography = "cbsa",
+  variables = "B01003_001",
+  year = 2020
+)
+cbsa_population
+```
+
+### Geographic subsets
+
+**tidycensus** supports geographic subsetting if supported by the API
+
+***Example: Wisconsin income analysis***
+
+```{r wi-income}
+wi_income <- get_acs(
+  geography = "county",
+  variables = "B19013_001",
+  state = "WI",
+  year = 2020
+)
+wi_income
+```
+
+Smaller geographies (census tracts, block groups, etc) can be subset by county.
+
+***Example: Dane County, WI***
+
+```{r dane-income}
+dane_income <- get_acs(
+  geography = "tract",
+  variables = "B19013_001",
+  state = "WI",
+  county = "Dane",
+  year = 2020
+)
+dane_income
+```
+
+**NOTE:** 5-year covers down to block group; 1-year only down to geographies with ≥ 65,000 pop
+
+## 2.3 Searching for variables in tidycensus
+
+Variable IDs are a PITA
+
+**tidycensus** has `load_variables()` to help with searching
+
+-   two required arguments:
+
+    1.  `year`: the year or end-year for census dataset or ACS sample
+
+    2.  `dataset`: the dataset name
+
+        1.  `"sf1"` = Summary File 1 for 2000 or 2010
+
+        2.  `"sf2"` = Summary File 2 for 2000 or 2010
+
+        3.  `"sf3"` = Summary File 3 for 2000
+
+        4.  `"sf4"` = Summary File 4 for 2000
+
+        5.  `"pl"` = PL-94171 Redistricting dataset for 2020
+
+        6.  `"acs1"` 1-year ACS
+
+        7.  `"acs5"` 5-year ACS
+
+            -   ACS Data Profile, Summary Tables, and Comparison Profile requests require the suffixes `/profile`, `/summary`, `/cprofile` respectively
+
+        8.  `"acsse"` = ACS Supplemental Estimates variables
+
+    3.  Users can specify argument `cache = TRUE` to store data in user cache
+
+```{r examples}
+v16 <- load_variables(2016, "acs5", cache = TRUE)
+```
+
+## 2.4 Data structure in tidycensus
+
+**tidycensus** is built to function in the tidyverse; Wickham's definition of "tidy" data is as follows:
+
+1.  Each observation forms a row
+2.  Each variable forms a column
+3.  Each observational unit forms a table
+
+**tidycensus** returns tibbles of decennial Census data tidied as follows:
+
+-   `GEOID` - the Census ID code giving unique ID to the geographic unit
+
+-   `NAME` representing a descriptive name of the unit
+
+-   `variable` contain info on Census variable name for the row
+
+-   `value` the data value for each unit-variable combination.
+
+    -   in ACS data, `value` is replaced with `estimate` and `moe` which represents the margin of error around the estimate
+
+Census or ACS "variables" are instead *characteristics* of enumeration units in **tidycensus**
+
+-   default setting is `output = "tidy"`
+
+-   rows represent data for unique spatial unit-variable combination
+
+***Example: hhinc demo***
+
+```{r hhcin-demo}
+hhinc <- get_acs(
+  geography = "state",
+  table = "B19001",
+  survey = "acs1",
+  year = 2016
+)
+hhinc
+```
+
+Row 1 demonstrates the estimate for the state-characteristic pair Alabama-B19001_001, with its associated moe
+
+For a 'wide' table, use `output = "wide"`
+
+```{r hhinc_wide}
+hhinc_wide <- get_acs(
+  geography = "state",
+  table = "B19001",
+  survey = "acs1",
+  year = 2016,
+  output = "wide"
+)
+hhinc_wide
+```
+
+### Understanding GEOIDs
+
+-   For core Census hierarchy (Census block -\> block group -\> census tract -\> county -\> state -\> division -\> region -\> nation) GEOID identifies specific unit AND unit's parent geographies
+
+***Example: Cimarron County, Oklahoma GEOIDs***
+
+```{r}
+cimarron_blocks <- get_decennial(
+  geography = "block",
+  variables = "H1_001N",
+  state = "OK",
+  county = "Cimarron",
+  year = 2020,
+  sumfile = "pl"
+)
+cimarron_blocks
+```
+
+For the GEOID, 40.025.950100.1.501 (periods added for clarity), it can be read as follows
+
+-   first two digits (**40)** are the State FIPS code for Oklahoma
+
+-   digits three through 5 (**025)** correspond to Cimarron County within Oklahoma
+
+    -   To look at counties across the whole US, the 5 digits together uniquely identify a county - so Oklahoma's Cimarron County can be read as **40025**
+
+-   next six digits represent the Census tract (**950100)** - in this case, Census Tract 9501, with zeroes padding the right.
+
+-   Twelfth digit **(1)** represents the parent block group of the Census block
+
+    -   A census tract will have up to, but no more than, 9 census block groups
+
+-   The final three digits (**501)** represent the individual census block.
+
+    -   The block's name is a combination of this ID and the parent block group digit (**1501)**
+
+For geographies outside the core hierarchy, will only contain IDs of parent geographies they fully nest within.
+
+cbsa's and zcta's will have their own unique GEOIDs independent of other aggregation levels.
+
+### Renaming variable IDs
+
+passing a named vector to `variables` parameter will feturn desired names rather than Census variable IDs
+
+```{r georgia-demo}
+ga <- get_acs(
+  geography = "county",
+  state = "Georgia",
+  variables = c(medinc = "B19013_001",
+                medage = "B01002_001"),
+  year = 2020
+)
+ga
+
+ga_wide <- get_acs(
+  geography = "county",
+  state = "Georgia",
+  variables = c(medinc = "B19013_001",
+                medage = "B01002_001"),
+  year = 2020,
+  output = "wide"
+)
+ga_wide
+```
+
+## 2.5 Other Census Bureau datasets in tidycensus
+
+-   **tidycensus** does not grant access to all datasets from Census API
+
+    -   **censusapi** provides more general api access
+
+    Two other datasets with custom functions are `get_estimates()` and `get_flows()` to access Population Estimates and ACS Migration Flows, respectively.
+
+### Using `get_estimates()`
+
+**Population Estimates Program (PEP)** provides yearly estimates based on projections drawn from birth, death, and migration rates from the most recent Census.
+
+It does provide access to indicators used for projection
+
+-   indicators can be specified using the `product` argument, either individually or in bulk.
+
+    -   population change estimates are pulled with `"components"`
+
+***Example: Queens County population estimate components***
+
+```{r pep_components}
+queens_components <- get_estimates(
+  geography = "county",
+  product = "components",
+  state = "NY",
+  county = "Queens",
+  year = 2019
+  )
+queens_components
+```
+
+The variables returned above include:
+
+-   BIRTHS: raw count of births from July 1 2018 to July 1 2019
+
+-   DEATHS: raw count of births from July 1 2018 to July 1 2019
+
+-   DOMESTICMIG: Net domestic migration in period
+
+-   INTERNATIONALMIG: Net international migration in period
+
+-   NATURALINC: Natural increase in period (Birth - Death)
+
+-   NETMIG: Net migration in period
+
+-   RBIRTH: Crude birth rate in period (per 1000)
+
+-   RDEATH: Crude death rate in period (per 1000)
+
+-   RDOMESTICMIG: Crude Domestic Migration Rate
+
+-   RINTERNATIONALMIG: Crude International Migration Rate
+
+-   RNATURALINC: Crude Natural Increase Rate
+
+-   RNETMIG: Crude Net Migration Rate
+
+The `"characteristics"` product lets users get unique demographic info, esp. when using `breakdown` argument with the arguments `"AGEGROUP"`, `"RACE"`, `"SEX"`, or `"HISP"`
+
+The `breakdown_labels = TRUE` returns informative labels
+
+```{r}
+louisiana_sex_hisp <- get_estimates(
+  geography = "state",
+  product = "characteristics",
+  breakdown = c("SEX", "HISP"),
+  breakdown_labels = TRUE,
+  state = "LA",
+  year = 2019
+)
+louisiana_sex_hisp
+```
+
+### Using get_flows()
+
+`get_flows()` pulls down info on in- and out-migration for states, counties, and metropolitan areas.
+
+-   pulls for a given geography, using data from a given 5-year ACS sample.
+
+***Example: Honolulu County, Hawaii***
+
+```{r example-flow}
+honolulu_migration <- get_flows(
+  geography = "county",
+  state = "HI",
+  county = "Honolulu",
+  year = 2019
+)
+honolulu_migration
+```
+
+`get_flows()` also includes migration flow mapping functionality, discussed later
+
+## 2.6 Debugging tidycensus errors
+
+**`tidycensus`** carries through census API errors where possible, and tries to translate common errors.
+
+***Example: mis-typed variable error***
+
+```{r}
+state_pop <- get_decennial(
+  geography = "state",
+  variables = "P01001",
+  year = 2010
+)
+```
+
+Note in console, error: `Error : Your API call has errors.  The API message returned is error: error: unknown variable 'P01001'. Using Census Summary File 1`
+
+For an example where a passed geography is not present in the given dataset
+
+***Example: Unavailable Geography***
+
+```{r}
+cbsa_ohio <- get_acs(
+  geography = "cbsa",
+  variables = "DP02_0068P",
+  state = "OH",
+  year = 2019
+)
+```
+
+**`tidycensus`** includes the `show_call` parameter that prints out the API call made
+
+```{r}
+cbsa_bachelors <- get_acs(
+  geography = "cbsa",
+  variables = "DP02_0068P",
+  year = 2019,
+  show_call = TRUE
+)
+```
+
+## Exercises
+
+1.  Review the available geographies in tidycensus from the geography table in this chapter. Acquire data on median age (variable `B01002_001`) for a geography we have not used.
+
+    ```{r}
+    california <- get_acs(
+      geography = "zcta",
+      variables = "B01002_001",
+      show_call = FALSE)
+
+    california
+    ```
+
+2.  Use the `load_variables()` function to find a variable that interests you that we haven't used yet. Use `get_acs()` to fetch data from the 2016-2020 ACS for counties in the state where you live, where you have visited, or where you would like to visit.
+
+    ```{r}
+    #summary_files(2020)
+    load_variables(2020, "dp")
+
+    los_angeles_u_5 <- get_acs(
+      geography = "tract",
+      state = "CA",
+      county = "Los Angeles",
+      variables = c(male_u_5 = "B01001_003", 
+                    female_u_5 = "B01001_027",
+                    total_pop_est = "B01001_001"),
+      summary_var = "B01001_001"
+    )
+
+    los_angeles_u_5 <- get_decennial(
+      geography = "tract",
+      state = "CA",
+      county = "Los Angeles",
+      variables = c(total_u_5 = "DP1_0002C"),
+      sumfile = "dp"
+    )
+    ```
+
+    ACS5 data for age under 5
+
+    -   B01001_003 = Male Estimated Total Age Under 5
+
+    -   B01001_027 = Female Estimated Total Age under 5
+
+    -   B01001_001 = Estimated Total, regardless of age or gender
+
+    Decennial census 2020 data for age under 5
+
+    -   DP1_0002C = Count of total population under age of 5
