@@ -601,3 +601,94 @@ moe_prop(25, 100, 5, 3)
 -   we have a derived estimate of 25% of the people in this hypothetical census tract having a Bachelor's Degree, with a Margin of Error of 4.943%
 
 ### Calculating Group-wise margins of error
+
+-   In the previous example, smaller age bands have too much uncertainty due to the Estimate/MOE ratio
+
+-   We can aggregate upward to a derived variable that is a sum of the bands for a single "population aged 65 and older" for each represented sex.
+
+    ```{r}
+    salt_lake_grouped <- salt_lake %>% 
+      mutate(sex = case_when(
+        str_sub(variable, start = -2) < "26" ~ "Male",
+        TRUE ~ "Female"
+      )) %>% 
+      group_by(GEOID, sex) %>% 
+      summarize(sum_est = sum(estimate),
+                sum_moe = moe_sum(moe, estimate))
+
+    salt_lake_grouped
+    ```
+
+To create the new tibble, `salt_lake_grouped`
+
+1.  We take the `salt_lake` tibble, THEN
+
+2.  we mutate it to create a `sex` column (the process is outlined in the bullet points below) THEN,
+
+    -   for each row in `variable`, the `case_when()` argument takes the final two characters of the variable id
+
+    -   For each variable ID where the final two characters are less than "26", the sex attribute is assigned the value `"Male"`
+
+    -   For all other variable IDs, where the final two characters are greater than or equal to "26" (in reality, they are the range 44-49), the sex attribute is assigned the value `"Female"`
+
+3.  we `group_by()` the data by the `GEOID` and `sex` values, THEN
+
+4.  we `summarize()` the grouped values such that:
+
+    -   `sum_est` is the sum of all `estimate` for each GEOID, sex pair, and
+
+    -   `sum_moe` is the derived margin of error for the sum of `estimate`, given their existing `moe`
+
+Even when we do this and derive MOEs that seem more reasonable, the author brings to our attention a warning by the Census Bureau
+
+> All \[derived MOE methods\] are approximations and uses should be cautious in using them. This is because these methods do not consider the correlation or covariance between the basic estimates. They may be overestimates or underestimates of the derived estimate's standard error depending on whether the two basic estimates are highly correlated in either the positive or negative direction. As a result, the approximated standard error may not match direct calculations of standard errors or calculations obtained through other methods.
+
+[Instructions for Applying Statistical Testing to American Community Survey Data (US Census Bureau, 2009)](https://www2.census.gov/programs-surveys/acs/tech_docs/statistical_testing/2009StatisticalTesting1Year.pdf)
+
+-   it may be more fruitful to see if the ACS has the data aggregated at the level you need
+
+    -   check the following ACS datasets:
+
+        -   existing combined tables from the ACS
+
+        -   Data Profile
+
+        -   Subject Tables
+
+        -   use your own aggregation and MOE estimation only when the data is otherwise unavailable
+
+## 3.6 Exercises
+
+-   The variable in 2015-2019 ACS for "Percent of the population age 25 and up with a bachelor's degree" is `DP02_0068P`. For a state of your choosing, use this variable to determine:
+
+```{r}
+california <- get_acs(
+  geography = "county",
+  variables = "DP02_0068P",
+  state = "CA",
+  year = 2019
+)
+california
+```
+
+-   The county with the highest percentage in the state;
+
+```{r}
+california %>%
+  filter(estimate == max(estimate))
+```
+
+-   The county with the lowest percentage in the state;
+
+```{r}
+california %>% 
+  filter(estimate == min(estimate))
+```
+
+-   The median value for counties in your chosen state.
+
+```{r}
+california %>% summarize(median_percent = median(estimate))
+```
+
+(One area the text does not guide on here, is how to compute a meaningful margin of error for a value such as the median percent of the population age 25 and up with a bachelor's degree per county)
