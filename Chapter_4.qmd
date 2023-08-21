@@ -1,0 +1,264 @@
+---
+title: "Chapter 4 Notes"
+format: 
+  docx: 
+    toc: true
+    highlight-style: arrow
+editor: visual
+execute:
+  echo: fenced
+  error: true
+  output: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Chapter 4: Exploring US Census data with visualization
+
+-   **ggplot2** by Hadley Wickham is the core visualization framework for **tidyverse**
+
+-   Chapter goes over the following chart types:
+
+    -   faceted ("small multiples")
+
+    -   population pyramids
+
+    -   Margin of Error plots
+
+-   Chapter goes over **plotly** for interactive vizualization
+
+```{r setup}
+library(tidycensus)
+library(tidyverse)
+```
+
+## 4.1 Basic Census visualization with ggplot2
+
+-   visualization is the examination of patterns and trends in data graphically
+
+-   visualization is especially key for exploratory analysis
+
+-   Below we'll pull in the data we'll work through - 2020 5-year Georgia median household income and median age by county, in a wide table format
+
+```{r mhi-georgia}
+ga_wide <- get_acs(
+  geography = "county",
+  state = "Georgia",
+  variables = c(medinc = "B19013_001",
+                medage = "B01002_001"),
+  output = "wide",
+  year = 2020
+)
+ga_wide
+```
+
+### Getting started with ggplot2
+
+1.  Initiate **ggplot2** visualizations as a plot object using `ggplot()`
+
+    -   First argument is a dataset to be visualized
+
+    -   Second argument is default `aes()` *(aesthetic)* mappings for the plot
+
+        -   mappings can be applied to elements such as data axes, fill, color, etc.
+
+After initializing the plot object, we layer plot elements onto the object
+
+-   Main factor here is the `geom`, determining the chart type to be used.
+
+    -   `geom_bar()` - bar plots
+
+    -   `geom_line()` - line plots
+
+    -   `geom_point()` - point plots
+
+    -   `geom_histogram()` - histograms
+
+    -   `geom_boxplot()` - box and whisker plots
+
+-   To add a geom layer, use the `+` operator
+
+#### Histograms
+
+We'll start with a histogram to look at data distribution
+
+```{r georgia-histo}
+options(scipen = 999) # optional call; avoid scientific notation
+
+ggplot(ga_wide, aes(x = medincE)) +
+  geom_histogram()
+```
+
+-   A histogram displays the distribution of data values
+
+    -   the horizontal axis represents the range of values from least to greatest
+
+    -   the vertical axis represents the count, or number quantity of data points with a given value
+
+        -   a given range of values is 'binned' into a box whose height represent the count of values that may be classed in said box
+
+        -   by default, **ggplot2** organizes the data values into 30 bins
+
+            -   this can be changed via the `bins` parameter in `geom_histogram()`, demonstrated below
+
+```{r georgia-15bin-histo}
+ggplot(ga_wide, aes(x = medincE)) +
+  geom_histogram(bins = 15)
+```
+
+#### Box-and-Whisker Plot
+
+-   The box-and-whisker plot is a common alternative to the histogram
+
+    -   The central box of a box plot shows the *interquartile range (IQR)* or those values between the 25th and 75th percentile
+
+        -   The central line of the box represents the distribution median
+
+    -   the *whiskers* demonstrate values outside the IQR as follows:
+
+        -   they may stretch to the min/max values of the distribution, OR
+
+        -   they may represent 1.5x the IQR in either, or both, directions
+
+    -   values plotted as points plotted beyond the whiskers are *outliers*
+
+```{r georgia-boxplot}
+ggplot(ga_wide, aes(y = medincE)) +
+  geom_boxplot()
+```
+
+-   in the above boxplot:
+
+    -   the `aes()` call maps the plot to the y axis, creating a vertical boxplot
+
+    -    the lower whiskers stretches to the minimum value
+
+    -   the upper whiskers stretches to 1.5x the IQR
+
+    -   we see several points plotted as outliers above the upper bound
+
+#### (Scatter plots) Visualizing multivariate relationships
+
+-   We may want to explore/visualize interrelationship between two (or more) variables
+
+-   with two numeric variables, we may explore relationships using *scatter plots*
+
+    -   one column of values is mapped to the X-axis
+
+    -   the other is mapped to the Y-axis
+
+    -   `geom_point()` makes scatter plots
+
+        -   two columns are needed for the `aes() mapping`
+
+```{r georgia-medage-medinc-scatter}
+ggplot(ga_wide, aes(x = medageE, y = medincE)) +
+  geom_point()
+```
+
+-   Sometimes, a plot like above clearly demonstrates the existence of a relationship between variables (*correlation)*
+
+-   Sometimes, the plot fails to make such correlation immediately clear
+
+    -   in these cases, we may add further elements to clarify
+
+    -   `geom_smooth()`, for instance, draws a fitted line representing the relationship between the plotted columns
+
+        -   `method = "lm"` uses the linear model to fit a line
+
+        -   `method = "loess"` uses Local Polynomial Regression Fitting to fit smoothed relationships
+
+```{r georgia-medage-medinc-scatter-lm-smooth}
+ggplot(ga_wide, aes(x = medageE, y = medincE)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+-   the regression line has a light downward movement from left to right, implying somewhat of a negative relationship between the two variables
+
+    -   we might interpret this as median household income declining slightly as median age increases
+
+## 4.2 Customizing ggplot2 visualizations
+
+-   **ggplot2** provides useful and attractive defaults, but analysts will want to customize visualizations for presenting to diverse audiences
+
+-   The subsection follows an example of visualization prep for data showing percent of commuters who use urban public transit
+
+    -   we take this data from 2019 1-year ACS Data Profile
+
+    -   The variable we use is `DP03_0021P` - "Percent!!COMMUTING TO WORK!!Workers 16 years and over!!Public transportation (excluding taxicab)"
+
+    -   We'll find the 20 largest metropolitan areas by pop using `slice_max()`
+
+```{r metro-pt-commute}
+metros <- get_acs(
+  geography = "cbsa",
+  variables = "DP03_0021P",
+  summary_var = "B01003_001",
+  survey = "acs1",
+  year = 2019
+) %>% 
+  slice_max(summary_est, n = 20)
+```
+
+-   data returned is 20x7, with two extra columns from the `summary_var` and its associated `summary_moe`, and the rows being the `slice_max` return
+
+-   below, we create a bar plot comparing public transit commute share between metro areas
+
+```{r initial-commute-chart}
+ggplot(metros, aes(x = NAME, y = estimate)) +
+  geom_col()
+```
+
+-   the above plot is hard to interpret without fine-tuning the formatting
+
+    -   x-axis overlap, making reading impossible
+
+    -   axis titles are not intuitive
+
+    -   data isn't sorted
+
+### Improving legibility
+
+-   we can perform the above cleaning
+
+    -   **ggplot2** works with **magrittr** piping and **tidyverse** functions, meaning we can combine manipulation and visualization tasks
+
+1.   We will format `NAME` to be more intuitive using **stringr** info nested in `mutate()` calls
+    -   `str_remove()` lets us use regex to remove unneeded parts of the `NAME` text for each area
+    -   the mutate calls are piped into `ggplot()` and `ggplot()` infers the dataset from the preceding pipe chains
+2.  We will improve legibility by putting metro name on y-axis and ACS estimate on x-axis
+3.  We will order data in descending order of estimated values using `reorder()` inside `aes()`
+4.  We plot it as a column plot
+
+```{r cleaned-commute-chart-a}
+metros %>% 
+  mutate(NAME = str_remove(NAME, "-.*$")) %>% 
+  mutate(NAME = str_remove(NAME, ",.*$")) %>% 
+  ggplot(aes(y = reorder(NAME, estimate), x = estimate)) +
+  geom_col()
+```
+
+-   the above is much cleaner, but we need to fix the labels to make the chart interpretable
+
+    -   We can finish cleaning up by using `labs()` to specify labels
+
+        -   In this instance, we will include a title label, a subtitle label, we will leave the y axis label empty, and we will add a caption label containing data credits
+
+    -   We can also include themes (in this case, using `theme_minimal()`
+
+```{r final-commute-chart}
+metros %>% 
+  mutate(NAME = str_remove(NAME, "-.*$")) %>% 
+  mutate(NAME = str_remove(NAME, ",.*$")) %>% 
+  ggplot(aes(y = reorder(NAME, estimate), x = estimate)) +
+  geom_col() +
+  theme_minimal() +
+  labs(title = "Public transit commute share",
+       subtitle = "2019 1-year ACS estimates",
+       y = "",
+       x = "ACS estimate",
+       caption = "Source: ACS Data Profile variable DP03_0021P via the tidycensus R package")
+```
+
+### Custom styling of ggplot2 charts

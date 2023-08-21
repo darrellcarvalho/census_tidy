@@ -17,6 +17,7 @@ female_u_5 <-  "B01001_027" # Estimated female under 5 Population, ACS
 total_pop_est <-  "B01001_001" # Total Pop Estimate, ACS
 total_u_5 <- "DP1_0002C" # Total Pop Under 5, Decennial census 2020
 
+pt_to_work <- "DP03_0021P" # Estimated number of commuters over the age of 16 who commute via public transit (exclusing taxis), ACS
 
 ## Tables
 acs_hhinc <- "B19001" # Household Income
@@ -24,7 +25,7 @@ acs_foreignpb <- "B05006" # Place Of Birth For The Foreign-Born Pop In The US
 acs_sba <- "B01001" # ACS Sex by Age table
 C2020_dp1 <- "DP1" # 2020 Decennial Census Data Profile
 acs_tot_pop <- "B01003" # ACS total population table
-
+acs_select_econ <- "DP03" # ACS Selected Economic Characteristics table
 
 # For the Census API, "group" = table
 
