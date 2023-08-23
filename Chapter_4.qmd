@@ -54,7 +54,7 @@ ga_wide
 
 ### Getting started with ggplot2
 
-1.  Initiate **ggplot2** visualizations as a plot object using `ggplot()`
+1.  Initalize **ggplot2** visualizations as a plot object using `ggplot()`
 
     -   First argument is a dataset to be visualized
 
@@ -131,7 +131,7 @@ ggplot(ga_wide, aes(y = medincE)) +
 
     -   the `aes()` call maps the plot to the y axis, creating a vertical boxplot
 
-    -    the lower whiskers stretches to the minimum value
+    -   the lower whiskers stretches to the minimum value
 
     -   the upper whiskers stretches to 1.5x the IQR
 
@@ -224,9 +224,7 @@ ggplot(metros, aes(x = NAME, y = estimate)) +
 
     -   **ggplot2** works with **magrittr** piping and **tidyverse** functions, meaning we can combine manipulation and visualization tasks
 
-1.   We will format `NAME` to be more intuitive using **stringr** info nested in `mutate()` calls
-    -   `str_remove()` lets us use regex to remove unneeded parts of the `NAME` text for each area
-    -   the mutate calls are piped into `ggplot()` and `ggplot()` infers the dataset from the preceding pipe chains
+1.  We will format `NAME` to be more intuitive using **stringr** info nested in `mutate()` calls - `str_remove()` lets us use regex to remove unneeded parts of the `NAME` text for each area - the mutate calls are piped into `ggplot()` and `ggplot()` infers the dataset from the preceding pipe chains
 2.  We will improve legibility by putting metro name on y-axis and ACS estimate on x-axis
 3.  We will order data in descending order of estimated values using `reorder()` inside `aes()`
 4.  We plot it as a column plot
@@ -262,3 +260,46 @@ metros %>%
 ```
 
 ### Custom styling of ggplot2 charts
+
+**ggplot2** maintains a wide scope for customization. Below, we demonstrate several style changes to color, transparency, font, and tick labels.
+
+```{r customized-commute-chart}
+library(scales)
+
+
+metros %>% 
+  mutate(NAME = str_remove(NAME, "-.*$")) %>% 
+  mutate(NAME = str_remove(NAME, ",.*$")) %>% 
+  ggplot(aes(y = reorder(NAME, estimate), x = estimate)) +
+  geom_col(color = "navy", fill = "navy",
+           alpha = 0.5, width = 0.85) +
+  theme_minimal(base_size = 12, base_family = "Orbitron") +
+  scale_x_continuous(labels = label_percent(scale = 1)) +
+  labs(title = "Public transit commute share",
+       subtitle = "2019 1-ear ACS estimates",
+       y = "",
+       x = "ACS estimate",
+       caption =  "Source: ACS Data Profile variable DP03_0021P via the tidycensus R package")
+```
+
+-   The above code used the following modifications:
+
+    -   `geom_cols()` had `aes()` mappings modified locally, rather than at the global level of the object initialization
+
+        -   the bar was given a `color` (the outline color) and `fill` (the fill color)
+
+        -   transparency was modified using `alpha` argument
+
+        -   `width = 0.85` increased the space between bars by reducing the visual width of each bar to 85% of the default value
+
+    -   `theme_minimal()` uses the `base_size` and `base_family` parameters, respectively
+
+        -   `base_size` controls the font size of plot elements, defaulting to 11
+
+        -   `base_family` designates the font family to use
+
+            -   in this case, the "Verdana" plot is used
+
+            -   any font family accessible from the operating system may be used
+
+            -   Check installed fonts with `systemfonts::system_fonts()`
