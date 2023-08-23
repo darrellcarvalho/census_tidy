@@ -303,3 +303,153 @@ metros %>%
             -   any font family accessible from the operating system may be used
 
             -   Check installed fonts with `systemfonts::system_fonts()`
+
+    -   `scale_x_continuous()` gives us a customized X-axis
+
+        -   `labels` parameter can take a function or formula to programmatically style tick labels
+
+        -   **scales** packages has formatting functions to apply:
+
+            -   `label_percent()`
+
+            -   `label_dollar()`
+
+            -   `label_date()`
+
+### Exporting data visualizations from R
+
+-   Once you get the design you want, you have several ways of exporting
+
+    -   **Export \> Save as Image** will let you save individual plots
+
+    -   `ggsave()` saves the last plot generated to an image file stored in a given directory (working directory by default)
+
+```{r export-demo-1}
+ggsave("metro_transit.png")
+```
+
+-   `ggsave()` has a lot of options:
+
+    -   `width` and `height` can control the image dimensions
+
+    -   `dpi` controls image resolution (dots per inch)
+
+    -   `path` specifies where to save the image
+
+```{r export-demo-2}
+ggsave(
+  filename = "metro_transit.png",
+  path = "./images",
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+```
+
+## 4.3 Visualizing margins of error
+
+-   we often want to visualize margins of error to get a sense of uncertainty around an estimate
+
+    -   this is especially important when making comparative analyses between small geographies
+
+### Data setup
+
+-   We will look at median household income for Main Counties from the 2016-2020 ACS
+
+```{r maine-setup}
+maine <- get_decennial(
+  state = "Maine",
+  geography = "county",
+  variables = c(totalpop = "P1_001N"),
+  year = 2020
+) %>% 
+  arrange(desc(value))
+maine
+```
+
+-   Maine has 16 counties
+
+    -   these range in population from a max of 303,069 to a min of 16,800
+
+    -   smaller counties will have relatively larger margins of error
+
+-   We will compare median household incomes to demonstrate
+
+    1.  get the data
+
+    2.  clean up `NAME` with `str_remove()` to remove redundant info
+
+```{r income-cleanup}
+maine_income <- get_acs(
+  state = "Maine",
+  geography = "county",
+  variables = c(hhincome = "B19013_001"),
+  year = 2020
+) %>% 
+  mutate(NAME = str_remove(NAME, " County, Maine"))
+
+maine_income
+```
+
+3.  Now we style rank the counties and stylize the plot
+
+```{r mhhincome-maine-rank}
+ggplot(maine_income,
+       aes(x = estimate,
+           y = reorder(NAME, estimate))) + # take counties in NAME and reorder by estimate values; note we can use -estimate to invert the order
+  geom_point(size = 3,
+             color = "darkgreen") +
+  labs(title = "Median household income",
+       subtitle = "Counties in Maine",
+       x = "",
+       y = "ACS estimate") +
+  theme_minimal(base_size = 12.5) +
+  scale_x_continuous(labels = label_dollar()) # format label as dollars
+```
+
+-   The chart seems to hint at a Wealthiest \> Poorest ranking, but note that it is more nuanced than our Metro example
+
+    -   The Metro examples all had large populations, with smaller relative MOEs
+
+    -   these smaller geographies may have more uncertainty due to the smaller population to sample from
+
+### Using error bars for margins of error
+
+-   given how close many of the values are, margins of error may prevent misleading interpretation for close values
+
+```{r maine-income-moes}
+maine_income %>% 
+  arrange(desc(moe))
+```
+
+-   there is a wide range of MOEs
+
+    -   note areas where MOE are larger than the differences between adjacently ranked estimates
+
+        -   this means the ranking has uncertainty worth noting
+
+    -   this means the dot visualization can be misleading, and we should pursue alternatives
+
+-   So we'll add some error bars
+
+    -   `geom_errorbarh()` plots horizontal bars around the points, showing the moe range around the value
+
+    -   where error bars overlap in whole or in part, this should be interpreted as having enough uncertainty that alternative rankings may be just as viable
+
+```{r maine-error-bars}
+ggplot(maine_income,
+       aes(x = estimate,
+           y = reorder(NAME, estimate))) + # take counties in NAME and reorder by estimate values; note we can use -estimate to invert the order
+  geom_errorbarh(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point(size = 3,
+             color = "darkgreen") +
+  labs(title = "Median household income",
+       subtitle = "Counties in Maine",
+       x = "",
+       y = "ACS estimate") +
+  theme_minimal(base_size = 12.5) +
+  scale_x_continuous(labels = label_dollar()) # format label as dollars
+```
+
+## 4.4 Visualizing ACS estimates over time
