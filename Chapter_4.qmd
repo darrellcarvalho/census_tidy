@@ -4,6 +4,10 @@ format:
   docx: 
     toc: true
     highlight-style: arrow
+    fig-format: retina
+    fig-dpi: 300
+    fig-height: 6
+    fig-width: 6
 editor: visual
 execute:
   echo: fenced
@@ -28,8 +32,11 @@ editor_options:
 -   Chapter goes over **plotly** for interactive vizualization
 
 ```{r setup}
+library(extrafont)
 library(tidycensus)
 library(tidyverse)
+library(scales)
+loadfonts(device = 'win')
 ```
 
 ## 4.1 Basic Census visualization with ggplot2
@@ -453,3 +460,424 @@ ggplot(maine_income,
 ```
 
 ## 4.4 Visualizing ACS estimates over time
+
+-   line charts are often used to visualize time-series information for analyzing change over time
+
+    -   **ggplot2** provides the `geom_line()` geom for line plots
+
+-   This demonstrates the use of 1-year ACS data for each year 2005-2019
+
+-   We look at median home value in Deschutes County, Oregon within the years 2005-2019, drawing from the 1-year ACS data for each year using the following steps:
+
+1.  We set up a named vector of years
+
+2.  we use `map_dfr()` to iterate over the vector of years, pulling down the ACS data we want for each year
+
+    ```{r iterate-over-years}
+    years <- 2005:2019
+    names(years) <- years
+
+    deschutes_value <- map_dfr(years, ~{
+      get_acs(
+        geography = "county",
+        variables = "B25077_001",
+        state = "OR",
+        county = "Deschutes",
+        year = .x,
+        survey = "acs1"
+      )
+    }, .id = "year")
+    ```
+
+3.  We can now plot it using `geom_line()`
+
+```{r deschutes-median-home-value-initial-plot}
+ggplot(deschutes_value, 
+       aes(x = year, y = estimate, group = 1)) + 
+  geom_line() + 
+  geom_point()
+```
+
+4.  Then we can clean the chart up, and add a margin of error ribbon to visualized uncertainty around the values
+
+```{r final-median-home-value-chart}
+ggplot(deschutes_value, 
+       aes(x = year, y = estimate, group = 1)) + 
+  geom_ribbon(
+    aes(ymax = estimate + moe, ymin = estimate - moe), 
+    fill = "navy",
+    alpha = 0.4) + 
+  geom_line(color = "navy") + 
+  geom_point(color = "navy", size = 2) + 
+  theme_minimal(base_size = 12) + 
+  scale_y_continuous(labels = label_dollar(
+    scale = .001, 
+    suffix = "k")) + 
+  labs(title = "Median home value in Deschutes County, OR",
+       x = "Year",
+       y = "ACS estimate",
+       caption = "Shaded area represents margin of error around the ACS estimate")
+```
+
+## 4.5 Exploring age and sex structure with population pyramids
+
+-   Population pyramids visualize population proportions on the x-axis
+
+    -   age cohort on the y-axis
+
+    -   sex as a categorical variable mirrored across the central axis
+
+### Preparing data from Pop Estimates API
+
+-   Using Utah as a demo case
+
+```{r utah-demo}
+utah <- get_estimates(
+  geography = "state",
+  state = "UT",
+  product = "characteristics",
+  breakdown = c("SEX", "AGEGROUP"),
+  breakdown_labels = TRUE,
+  year = 2019
+)
+
+utah
+```
+
+-   We won't need `"Both sexes"` or `"All ages"`
+
+    -   we use a NOT EQUAL conditional in the filter (`!=`) to remove rows where SEX has "Both sexes" values
+
+-   We need to isolate 5 year range bands from the other rows which will not be used
+
+    -   We use the regex expression `"^Age"` below to select all values of `AGEGROUP` that start with the word `Age`, as these are the 5 year range rows
+
+-   We mutate values where `SEX` equals `"Male"` to be negative, so that they can be mirrored across a central axis on 0.
+
+```{r utah-tidying}
+utah_filtered <- filter(utah, str_detect(AGEGROUP, "^Age"),
+                        SEX != "Both sexes") %>% 
+  mutate(value = ifelse(SEX == "Male", -value, value))
+```
+
+### Designing and styling the pop pyramid
+
+We can make a rough draft with the following code
+
+-   Note:
+
+    -   x axis has the value; negative for males, positive for females
+
+    -   y axis has the age bands in 5 year increments
+
+    -   bars are filled with color based on the categorical value of "Male" or "Female" in SEX
+
+```{r utah-design}
+ggplot(utah_filtered, aes(x = value,  y = AGEGROUP, fill = SEX)) +
+  geom_col()
+```
+
+We can clean this up for clarity and aesthetics
+
+-   We will remove redundancy in labels
+
+-   We will adjust the scale of axis ticks for easier interpretability
+
+```{r clean-pyramid}
+utah_pyramid <- ggplot(utah_filtered,
+                       aes(x = value,
+                           y = AGEGROUP,
+                           fill = SEX)) + 
+  geom_col(width = 0.95, alpha = 0.75) +
+  theme_minimal(base_family = "Verdana", 
+                base_size = 12) +
+  scale_x_continuous(
+    labels = ~number_format(scale = .001, suffix = "k")(abs(.x)),
+                            limits = 140000 * c(-1,1)
+                            ) +
+  scale_y_discrete(labels = ~str_remove_all(.x, "Age\\s|\\syears")) +
+  scale_fill_manual(values = c("darkred", "navy")) +
+  labs(x = "",
+       y = "2019 Census Bureau population estimate",
+       title = "Population structure in Utah",
+       fill = "",
+       caption = "Data source: US Census Bureau\npopulation estimates & tidycensus R package")
+
+utah_pyramid
+```
+
+## 4.6 Visualizing group-wise comparisons
+
+-   faceted plots (aka small multiples) allow for the visualization of multiple sub-groups of data in such a way that they can be compared to each other, side by side
+
+-   We will use census tract geography and median home values in Clackamas, Columbia, Marion, Multnomah, Washington, and Yamhill counties, Oregon.
+
+```{r Oregon-area-mhv}
+housing_val <- get_acs(
+  geography = "tract",
+  variables = "B25077_001",
+  state = "OR",
+  county = c("Multnomah", "Clackamas",
+             "Washington", "Yamhill",
+             "Marion", "Columbia"),
+  year = 2020
+)
+
+housing_val
+```
+
+-   `NAME` can be split into several useful columns using `separate()`
+
+```{r}
+housing_val2 <- separate(
+  housing_val,
+  NAME,
+  into = c("tract", "county", "state"),
+              sep = ", "
+)
+
+housing_val2
+```
+
+-   tidyverse lets us use a series of pipes, groupings, and summaries to do group-wise comparison across all 6 counties:
+
+```{r}
+housing_val2 %>% 
+  group_by(county) %>% 
+  summarize(min = min(estimate, na.rm = TRUE),
+            mean = mean(estimate, na.rm = TRUE),
+            median = median(estimate, na.rm = TRUE),
+            max = max(estimate, na.rm = TRUE))
+```
+
+-   We can now plot the (statistical) distribution of values
+
+    -   We'll see a simple density plot of all values, and then the use of `facet_wrap()` to make a group of density plots for each county
+
+```{r total-distribution}
+ggplot(housing_val2, aes(x = estimate)) + 
+  geom_density()
+```
+
+-   We can do an overlay across the variables using fill
+
+```{r}
+ggplot(housing_val2, aes(x = estimate, fill = county)) + 
+  geom_density(alpha = 0.3)
+```
+
+-   `facet_wrap()` instead breaks each overlayed plot into its own individual plot
+
+```{r}
+ggplot(housing_val2, aes(x = estimate)) + 
+  geom_density(fill = "darkgreen", color = "darkgreen", alpha = 0.5) +
+  facet_wrap(~county) + 
+  scale_x_continuous(labels = dollar_format(scale = 0.000001,
+                                           suffix = "m")) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.y = element_blank(),
+        axis.text.x = element_text(angle = 45)) +
+  labs(x = "ACS estimate",
+       y = "",
+       title = "Median home values by Census tract, 2015-2019 ACS")
+```
+
+## 4.7 Advanced visualization with ggplot2 extensions
+
+-   there are a variety of ggplot2 extensions developed by folks outside the ggplot2 core team
+
+    -   examples can be found [here](https://exts.ggplot2.tidyverse.org/)
+
+-   The author walks us through 4:
+
+    -   **ggridges** which generates ridgeline plots - a density plot visualization with plots overlapping each other as though silhouetted ridges (also called a "joyplot" in reference to the iconic Joy Division album cover)
+
+```{r}
+library(ggridges)
+
+ggplot(housing_val2, aes(x = estimate,
+                         y = county)) +
+  geom_density_ridges() +
+  theme_ridges() +
+  labs(x = "Median home value: 2016-2020 ACS estimate",
+       y = "") +
+  scale_x_continuous(labels = label_dollar(scale = .000001, suffix = "m"),
+                     breaks = c(0, 500000, 1000000)) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+-   **ggbeeswarm** which generates beeswarm plots - clouds of points jittered/dispersed to show overall density
+
+    -   can be useful for visualizing multiple variables on a chart
+
+```{r}
+library(ggbeeswarm)
+
+ny_race_income <- get_acs(
+  geography = "tract",
+  state = "NY",
+  county = c("New York", "Bronx", "Queens", "Richmond", "Kings"),
+  variables = c(White = "B03002_003",
+                Black = "B03002_004",
+                Asian = "B03002_006",
+                Hispanic = "B03002_012"),
+  summary_var = "B19013_001",
+  year = 2020
+) %>% 
+  group_by(GEOID) %>% 
+  filter(estimate == max(estimate, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  filter(estimate != 0)
+
+ggplot(ny_race_income, aes(x = variable, 
+                           y = summary_est,
+                           color = summary_est)) +
+  geom_quasirandom(alpha = 0.5) +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  scale_color_viridis_c(guide = "none") +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(x = "Largest group in Census tract",
+       y = "Median household income",
+       title = "Household income distribution by largest racial/ethnic group",
+       subtitle = "Census tracts, New York City",
+       caption = "Data source: 2016-2020 ACS")
+```
+
+-   **geofacet** plots for faceted representation of information in a spatial format without more complex geospatial tools
+
+    -   "The key is to use a column that can map correctly to information in the geofaceted grid you are using"\
+
+```{r}
+library(geofacet)
+
+us_pyramid_data <- get_estimates(
+  geography = "state",
+  product = "characteristics",
+  breakdown = c("SEX", "AGEGROUP"),
+  breakdown_labels = TRUE,
+  year = 2019
+) %>%
+  filter(str_detect(AGEGROUP, "^Age"),
+         SEX != "Both sexes") %>%
+  group_by(NAME) %>%
+  mutate(prop = value / sum(value, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(prop = ifelse(SEX == "Male", -prop, prop))
+
+ggplot(us_pyramid_data, aes(x = prop, y = AGEGROUP, fill = SEX)) + 
+  geom_col(width = 1) + 
+  theme_minimal() + 
+  scale_fill_manual(values = c("darkred", "navy")) + 
+  facet_geo(~NAME, grid = "us_state_with_DC_PR_grid2",
+            label = "code") + 
+  theme(axis.text = element_blank(),
+        strip.text.x = element_text(size = 8)) + 
+  labs(x = "", 
+       y = "", 
+       title = "Population Structure\nBy Age and Sex", 
+       fill = "", 
+       caption = "Data source: US Census Bureau\npopulation estimates & tidycensus R package")
+```
+
+-   **plotly** - a library for interactive visualization drawing on the **htmlwidgets** package and the Plotly JavaScript data visualization library
+    -   with **plotly**'s `ggplotly()` function, you can make any existing `ggplot()` object into an interactive chart\
+
+```{r message=TRUE, warning=TRUE}
+library(plotly)
+
+#ggplotly(utah_pyramid)
+```
+
+## 4.8 Learning more about visualization
+
+Author recommends the following readings:
+
+-   Munzer. 2014. *Visualization Analysis and Design.* CRC Press. <https://doi.org/10.1201/b17511>
+
+-   Knaflic. 2015. "Storytelling with Data," October. <https://doi.org/10.1002/9781119055259>
+
+-   Healy. 2019. *Data Visualization: A Practical Introduction.* Princeton University Press. <https://socviz.co/>
+
+-   Wilke. 2019. *Fundamentals of Data Visualization.* O'Reilly Media. <https://clauswilke.com/datavis/>
+
+## 4.9 Exercises
+
+-   Choose a different variable in the ACS and/or a different location and create a margin of error visualization of your own.
+
+```{r}
+years <- 2005:2019
+names(years) <- years
+
+la_value <- map_dfr(years, ~{
+  get_acs(
+    geography = "county",
+    variables = "B25077_001",
+    state = "CA",
+    county = "Los Angeles",
+    year = .x,
+    survey = "acs1"
+  )
+}, .id = "year")
+```
+
+```{r}
+ggplot(la_value, aes(x = year, y = estimate, group = 1)) + 
+  geom_ribbon(aes(ymax = estimate + moe, ymin = estimate - moe), 
+              fill = "navy",
+              alpha = 0.4) + 
+  geom_line(color = "navy") + 
+  geom_point(color = "navy", size = 2) + 
+  theme_minimal(base_size = 12) + 
+  scale_y_continuous(labels = label_dollar(scale = .001, suffix = "k")) + 
+  labs(title = "Median home value in Los Angeles County, CA",
+       x = "Year",
+       y = "ACS estimate",
+       caption = "Shaded area represents margin of error around the ACS estimate")
+```
+
+-   Modify the population pyramid code to create a different, customized population pyramid. You can choose a different location (state or county), different colors/plot design, or some combination!
+
+```{r}
+la_age_sex <- get_estimates(
+  geography = "county",
+  state = "CA",
+  county = "Los Angeles",
+  product = "characteristics",
+  breakdown = c("SEX", "AGEGROUP"),
+  breakdown_labels = TRUE,
+  year = 2019
+)
+
+la_age_sex_filtered <- filter(la_age_sex, str_detect(AGEGROUP, "^Age"),
+                        SEX != "Both sexes") %>% 
+  mutate(value = ifelse(SEX == "Male", -value, value))
+
+la_pyramid <- ggplot(la_age_sex_filtered,
+                       aes(x = value,
+                           y = AGEGROUP,
+                           fill = SEX,
+                           text = paste0(
+                             "POPULATION: ",
+                             label_comma()
+                               (abs(value))
+                               )
+                             )
+                           ) + 
+  geom_col(width = 0.90, alpha = 0.75) +
+  theme_minimal(base_family = "Verdana", base_size = 12) +
+  scale_x_continuous(
+    labels = ~label_number(scale = 0.001, suffix = "k")(abs(.x)),
+    breaks = c(-400000, -200000, 200000, 400000),
+    limits = 500000 * c(-1, 1)) +
+  scale_y_discrete(labels = ~str_remove_all(.x, "Age\\s|\\syears")) +
+  scale_fill_manual(values = c("darkred", "navy")) +
+  labs(x = "",
+       y = "2019 Census Bureau population estimate",
+       title = "Population structure\nLos Angeles County, CA",
+       fill = "",
+       caption = "Data source: US Census Bureau\npopulation estimates & tidycensus R package")
+
+
+la_pyramid # %>% ggplotly(tooltip = c("AGEGROUP", "SEX", "text"))
+```
