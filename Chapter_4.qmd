@@ -32,11 +32,9 @@ editor_options:
 -   Chapter goes over **plotly** for interactive vizualization
 
 ```{r setup}
-library(extrafont)
 library(tidycensus)
 library(tidyverse)
 library(scales)
-loadfonts(device = 'win')
 ```
 
 ## 4.1 Basic Census visualization with ggplot2
