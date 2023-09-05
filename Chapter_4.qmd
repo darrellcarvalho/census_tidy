@@ -280,10 +280,10 @@ metros %>%
   ggplot(aes(y = reorder(NAME, estimate), x = estimate)) +
   geom_col(color = "navy", fill = "navy",
            alpha = 0.5, width = 0.85) +
-  theme_minimal(base_size = 12, base_family = "Orbitron") +
+  theme_minimal(base_size = 12, base_family = "Verdana") +
   scale_x_continuous(labels = label_percent(scale = 1)) +
   labs(title = "Public transit commute share",
-       subtitle = "2019 1-ear ACS estimates",
+       subtitle = "2019 1-year ACS estimates",
        y = "",
        x = "ACS estimate",
        caption =  "Source: ACS Data Profile variable DP03_0021P via the tidycensus R package")
