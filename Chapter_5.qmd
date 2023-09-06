@@ -1,0 +1,436 @@
+---
+title: "Chapter 5 Notes"
+format: 
+  docx: 
+    toc: true
+    highlight-style: arrow
+    fig-format: retina
+    fig-dpi: 300
+    fig-height: 6
+    fig-width: 6
+editor: visual
+execute:
+  echo: fenced
+  error: true
+  output: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup}
+library(tidycensus)
+library(tidyverse)
+library(scales)
+library(tigris)
+```
+
+# Chapter 5: Census geographic data and applications in R
+
+-   Census and ACS data has associated **geographies**
+
+    -   These geographies are represented via the Census Bureau's *Topologically Integrated Geographic Encoding and Referencing* **(TIGER/Line)** database
+
+    -   Most users access datasets as *shapefiles* 
+
+    -   **TIGER** shapefiles have 33 general data types:
+
+        1.  *Legal Entities:* geographies with official legal standing (states, counties, etc).
+
+        2.  *Statistical Entities:* geographies defined by Census Bureau for data collection and dissemination (Census tracts, Census block groups, Census blocks)
+
+        3.  *Geographic Features:* geographic datasets not linked with demographic data, namely roads, water features, etc.
+
+    -   **tigris** package allows for direct importing of TIGER/Line shapefiles without the user needing to wrangle intermediate steps (decompressing from ZIP, etc.)
+
+    -   **sf** package is used for representing spatial data as R objects
+
+## 5.1 Basic usage of tigris
+
+-   **tigris** functions *download* then *load* requested datasets
+
+    -   below we have `tigris::states()` used to request all states and state equivalent units in US
+
+```{r basic_usage}
+st <- states()
+```
+
+-   note the `Retrieving data` alert: **tigris** defaults to most recent year for which a complete set of shapefiles is available
+
+-   We can determine the class of our downloaded spatial data now:
+
+```{r class_check}
+class(st)
+```
+
+-   we have a single object that has two classes - `"sf"` and `"data.frame"`
+
+-   let's check the object in more detail:
+
+```{r detail_return}
+st
+```
+
+-   we see that we have a fairly typical data frame, except that it has a column we may be unfamiliar with: `geometry`
+
+    -   the `geometry` column is a column filled with lists, wherein each list contains longitude/latitude coordinate pairs representing each state's boundary
+
+-   Let's look at the boundaries plotted:
+
+```{r state_boundaries}
+plot(st$geometry)
+```
+
+-   Census datasets may be available by `state` or by `county`
+
+    -   depending on use context, we may either, or both, of these units to be designated to pull down the data
+
+        -   e.g. `counties()` pulls down all US counties, but we may use `state` argument to get those counties belonging to a single State.
+
+            -   NOTE: Below, we use "NM", the State Postal Code abbreviation - we may also use "New Mexico"
+
+```{r nm_counties}
+nm_counties <- counties("NM")
+plot(nm_counties$geometry)
+```
+
+-   We have pulled down *Legal Entities* so far, but we can use **tigris** to pull down *Statistical Entities* as well
+
+```{r los_alamos_tracts}
+la_tracts <- tracts("NM", "Los Alamos")
+plot(la_tracts$geometry)
+```
+
+-   We can pull down geographic features such as roads and water features; below we pull down Los Alamo County's water bodies.
+
+```{r los_alamo_water}
+la_water <- area_water("NM", "Los Alamos")
+plot(la_water$geometry)
+```
+
+### Understanding tibris and simple features
+
+-   **tigris** returns vector data, that is, data represented as points, lines, and polygons.
+
+-   in R, we represent vector data with the **sf** package (short for *simple features*, an ISO standard)
+
+    -   **sf** is a means to call several C libraries without programming in C; it draws from:
+
+    <!-- -->
+
+        -   **GDAL:** read/write spatial data
+
+        -   **GEOS:** model spatial relationships
+
+        -   **PROJ:** represent coordinate reference systems
+
+    -   **sf** represents vector data as a data frame with a `geometry` column
+
+        -   each entry in the `geometry` column represents the spatial boundaries/dimensions of the associated feature
+
+        -   when an `sf` object is printed, a data frame is returned with additional geographical context above:
+
+            -   `geometry type` (point, line, polygon, multipoint, multiline, multipolygon, etc)
+
+            -   `bounding box`: the coordinates for the corners of the smallest rectangle that would encompass the entirety of a feature/set of features
+
+            -   `Coordinate Reference System`:
+
+#### Points
+
+-   **points** are represented as a single coordinate pair (X,Y)
+
+    -   points are 0D
+
+    -   sf point objects are geometry type `POINT`
+
+```{r dc_landmarks_points}
+dc_landmarks <- landmarks("DC", type = "point")
+
+plot(dc_landmarks$geometry)
+```
+
+#### Lines
+
+-   **Lines** are composed of two or more points (coordinate pairs)
+
+    -   Lines are 1D as they only possess Length - the distance between their defining coordinate pairs.
+
+    -   Roads, railroads, etc. are represented as lines by TIGER
+
+    -   **sf** represents lines with the geometry type `LINESTRING`
+
+```{r dc_roads_lines}
+dc_roads <- primary_secondary_roads("DC")
+plot(dc_roads$geometry)
+```
+
+#### Polygons
+
+-   **Polygons** are enclosed shapes defined by three or more connected coordinate pairs.
+
+    -   TIGER polygons include features such as block groups, tracts, etc.
+
+    -   Polygons are 2D.
+
+#### Multis
+
+-   The above types each have a corresponding multi counterpart for more complex relationships
+
+    -   `MULTIPOINT`
+
+    -   `MULTILINESTRING`
+
+    -   `MULTIPOLYGON`
+
+### Data availability in tigris
+
+-   check the book [here](https://walker-data.com/census-r/census-geographic-data-and-applications-in-r.html#data-availability-in-tigris) for a full listing of data set functions available in `tigris`
+
+## 5.2 Plotting geographic data
+
+-   while base `plot()` has been extended and is capable of visualizing `geometry`, more options exist for effective spatial visualization
+
+### ggplot2 and `geom_sf()`
+
+-   `geom_sf()` introduced in **ggplot2** 3.0, supporting simple feature plotting
+
+```{r los_alamos_geom}
+ggplot(la_tracts) +
+  geom_sf()
+```
+
+-   by default, **ggplot2** uses standard grey grid, with lat/long in Decimal Degrees
+
+-   `theme_void()` removes the background map elements
+
+```{r los_alamos_void}
+ggplot(la_tracts) +
+  geom_sf() +
+  theme_void()
+```
+
+-   **patchwork** allows us to arrange multi-plot layouts with **ggplot2** spatial visuals
+
+```{r patchwork_los_alamos}
+library(patchwork)
+
+la_block_groups <- block_groups("NM", "Los Alamos")
+
+gg1 <- ggplot(la_tracts) +
+  geom_sf() +
+  theme_void() +
+  labs(title = "Census tracts")
+
+gg2 <- ggplot(la_block_groups) +
+  geom_sf() +
+  theme_void() + 
+  labs(title = "Block groups")
+
+gg1 + gg2 # horizontal arrangement
+gg1 / gg2 # vertical arrangement
+```
+
+### Interactive viewing with mapview
+
+-   For many years, R did not have the capabilities for interactive visual exploration
+
+    -   this all changed with the development of `htmlwidgets`
+
+-   We can use `mapview()` to make interactive, zoomable maps
+
+```{r la_mapview}
+library(mapview)
+mapview(la_tracts)
+```
+
+## 5.3 tigris workflows
+
+This section covers some of the other functions present in **tigris** to integrate it into broader spatial analyses
+
+### TIGER/Line and cartographic boundary shapefiles
+
+-   **tigris** includes functions to download *cartographic boundary shapefiles*
+
+    -   derived from TIGER/Line shapefiles
+
+        -   generalized interior
+
+        -   clipped to shore
+
+        -   preferred for Thematic mapping
+
+        -   may be pulled down by argument `cb = TRUE`
+
+    -   TIGER/LINE shapefiles (may) represent "official" county areas - including water
+
+**Demo of default and cartographic boundary differences for Michigan**
+
+```{r michigan_cb_tiger}
+mi_counties <- counties("MI")
+mi_counties_cb <- counties("MI", cb = TRUE)
+
+mi_tiger_gg <- ggplot(mi_counties) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "TIGER/Line")
+
+mi_cb_gg <-  ggplot(mi_counties_cb) +
+  geom_sf() +
+  theme_void() +
+  labs(title = "Cartographic boundary")
+
+mi_tiger_gg + mi_cb_gg
+```
+
+-   when using `cb = TRUE`, we also have an available `resolution` argument that may be set to one of three options with increasing levels of generalization and decreasing relative file size:
+
+    1.  `resolution = "500k"`: default resolution, 1:500,000
+
+    2.  `resolution = "5m"`: 1:5,000,000
+
+    3.  `resolution = "20m"` 1:25,000,000
+
+### Caching tigris data
+
+-   options can be set to cache tigris data for repeat usage
+
+    -   especially useful for larger files or poorer quality internet connections
+
+    -   to set the option, use `options(tigris_use_cache = TRUE)`
+
+    -   to check the tigris cache directory, use `rappdirs::user_cache_dir("tigris")`
+
+    -   Use `tigris_cache_dir()` to set a different location for cache files
+
+### Understanding yearly differences in TIGER/Line files
+
+-   The Census Bureau has a time series of TIGER/Line shapefiles for years 1990 thru 2020.
+
+-   Some geographies are mostly static across time (State boundaries)
+
+-   Others change frequently due to demographic shifts (enumeration units)
+
+-   The Census Bureau tries to keep census tract populations around 4000 people
+
+    -   fast growing areas are frequently subdivided and redrawn to account for this
+
+-   We will demo the changes in Tarrant, TX using `ggplot()`, `purrr::map()`, `glue()`, and **patchwork**
+
+**Tarrant, TX Demo**
+
+```{r tarrant_tract_changes}
+library(tidyverse)
+library(patchwork)
+library(glue)
+
+yearly_plots <- map(seq(1990, 2020, 10), ~{ # for each decade from 1990 to 2020:
+  year_tracts <- tracts("TX","Tarrant",     # year_tracts gets Tarrant, TX tracts
+                        year = .x,          # pulled for each decade
+                        cb = TRUE)          # returning the cartographic boundaries
+  
+  ggplot(year_tracts) + # initialize a plot for each decade
+    geom_sf() +         # plot it with the sf geometry
+    theme_void() +      # remove map elements
+    labs(
+      title = glue("{.x}: {nrow(year_tracts)} tracts")
+      ) # label each plot the decade and the number of tracts 
+  }
+)
+
+# create the patchwork plot
+(yearly_plots[[1]] + yearly_plots[[2]]) /
+  (yearly_plots[[3]] + yearly_plots[[4]])
+```
+
+-   From this, we can see a gain of 180 census tracts in Tarrant County from 1990 to 2020
+
+    -   These changes are especially important for time-series analyses at the census tract level; data from 2010 will for different geographies (different census tracts) than for 2020.
+
+        -   one means of accounting for this is areal interpolation, covered in chapter 7
+
+-   by default, **tigris** uses the most recent year for which cartographic boundary shapefiles are fully available
+
+    -   presently, this is 2021
+
+    -   `options(tigris_year)` can be used to modify the default year
+
+### Combining tigris datasets
+
+-   From 2019 onward, the Census releases national small-area cartographic boundary files
+
+    -   specify `cb = TRUE` to get such cartographic boundaries
+
+```{r national_boundaries}
+us_bgs_2020 <- block_groups(cb = TRUE, year = 2020)
+nrow(us_bgs_2020)
+```
+
+-   this option is not available for 2018 and earlier
+
+-   we can generate them using existing **tidyverse** tools such as `purrr::map()`, specifically `purrr::map_dfr()`
+
+**Demonstration for 2018, all states + DC and Puerto Rico**
+
+```{r}
+state_codes <- c(state.abb, "DC", "PR")
+
+us_bgs_2018 <- map_dfr(
+  state_codes,
+  ~block_groups(
+    state = .x,
+    cb = TRUE,
+    year = 2018
+  )
+)
+
+nrow(us_bgs_2018)
+```
+
+-   The initial call is notably long, as the cache hasn't been developed.
+
+    -   once files are cached, processes are much quicker.
+
+### Coordinate reference systems
+
+-   data is *referenced* to some point on the Earth's surface using an appropriate Earth model
+
+    -   A model the data is referenced to is called its Coordinate Reference System
+
+    -   Two types:
+
+        -   *Geographic Coordinate System*
+
+        -   *Projected Coordinate System*
+
+-   Default CRS for tigris data is "NAD83"
+
+-   `sf::st_crs()` WKT representation of the CRS
+
+```{r fl_counties_nad83}
+library(sf)
+fl_counties <- counties("FL", cb = TRUE)
+st_crs(fl_counties)
+```
+
+-   we can see the Datum, the ellipsoid (generalized 3D model of Earth's shape), Prime Meridian used, and the unique EPSG ID
+
+-   **sf** uses **s2** to perform spheroid calculations at global or regional scales
+
+    -   when working with smaller areas, *projected CRS* will be preferred
+
+    -   **crsuggest helps choose appropriate CRS**
+
+#### Using the crsuggest package
+
+-   `suggest_crs()` will return a tibble of recommended projections for the provided data
+
+    -   it does this by comparing input geometry against built-in dataset extents and finding the pairing with the smallest "Hausdorff distance"
+
+    -   Below we run it for Florida and find a recommendation for "Florida GDL Albers"
+
+```{r fl_counties_crs}
+library(crsuggest)
+fl_crs <- suggest_crs(fl_counties)
+
+fl_crs
+```
