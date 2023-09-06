@@ -117,11 +117,13 @@ plot(la_water$geometry)
 
     <!-- -->
 
-        -   **GDAL:** read/write spatial data
+    ```         
+    -   **GDAL:** read/write spatial data
 
-        -   **GEOS:** model spatial relationships
+    -   **GEOS:** model spatial relationships
 
-        -   **PROJ:** represent coordinate reference systems
+    -   **PROJ:** represent coordinate reference systems
+    ```
 
     -   **sf** represents vector data as a data frame with a `geometry` column
 
@@ -434,3 +436,22 @@ fl_crs <- suggest_crs(fl_counties)
 
 fl_crs
 ```
+
+-   we can then project it to our chosen *projected* CRS as follows:
+
+```{r fl_projected_demo}
+fl_projected <- st_transform(fl_counties, crs = 3087)
+head(fl_projected)
+```
+
+-   the dimensions and coordinates for our spatial object have changed:
+
+    -   distance is now measured in meters
+
+    -   instead of latitude and longitude, we have Northings and Eastings
+
+    -   the dataset now uses a 'false origin' different from the 0,0 of the intersection of the Prime Meridian and the Equator
+
+-   These changes make planar geometry easier
+
+#### Plotting with `coord_sf()`
