@@ -392,7 +392,7 @@ nrow(us_bgs_2018)
 
     -   once files are cached, processes are much quicker.
 
-### Coordinate reference systems
+## 5.4 Coordinate reference systems
 
 -   data is *referenced* to some point on the Earth's surface using an appropriate Earth model
 
@@ -455,3 +455,43 @@ head(fl_projected)
 -   These changes make planar geometry easier
 
 #### Plotting with `coord_sf()`
+
+-   `coord_sf` can be paired with `geom_sf` to transform a plot's crs in situ
+
+```{r}
+options(scipen = 999)
+
+ggplot(fl_counties) +
+  geom_sf() +
+  coord_sf(crs = 3087)
+```
+
+-   the chart still defaults to long/lat; to display the datum units, use the `datum` argument
+
+```{r}
+ggplot(fl_counties) +
+  geom_sf() +
+  coord_sf(crs = 3087, datum = 3087)
+```
+
+## 5.5 Working with geometries
+
+-   This section demonstrates several geometric operations that will be useful in constructing spatial visuals moving forward.
+
+### Shifting and rescaling geometry for national US mapping
+
+-   A common issue in US mapping is determining how to handle the non-contiguous States and territories
+
+    -   **tigris** has a utility function called `shift_geometry()` which works by re-plotting Alaska, Hawaii, and Puerto Rico (but not other US territories)
+
+    -   It has optional arguments:
+
+        -   `preserve_area` which, when set to `FALSE` by default, resizes Hawaii and Alaska relative to the US's area
+
+        -   `position` which sets the non-contiguous states and territory to `below` or `outside` the plot relative to the contiguous States
+
+### Converting polygons to points
+
+### Exploding multipolygon geometries to single parts
+
+## 5.6 Exercises
