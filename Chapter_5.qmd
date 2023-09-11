@@ -1,5 +1,6 @@
 ---
 title: "Chapter 5 Notes"
+prefer-html: true
 format: 
   docx: 
     toc: true
@@ -22,6 +23,7 @@ library(tidycensus)
 library(tidyverse)
 library(scales)
 library(tigris)
+library(sf)
 ```
 
 # Chapter 5: Census geographic data and applications in R
@@ -482,16 +484,151 @@ ggplot(fl_counties) +
 
 -   A common issue in US mapping is determining how to handle the non-contiguous States and territories
 
-    -   **tigris** has a utility function called `shift_geometry()` which works by re-plotting Alaska, Hawaii, and Puerto Rico (but not other US territories)
+```{r us_unshifted}
+us_states <- states(cb = TRUE, resolution = "20m")
 
-    -   It has optional arguments:
+ggplot(us_states) +
+  geom_sf() +
+  theme_void()
+```
 
-        -   `preserve_area` which, when set to `FALSE` by default, resizes Hawaii and Alaska relative to the US's area
+-   We can try to reproject the data so that, for example, Alaska doesn't stretch across 180° Long
 
-        -   `position` which sets the non-contiguous states and territory to `below` or `outside` the plot relative to the contiguous States
+    -   Note below that Alaska, Hawaii, and Puerto Rico appear distorted by curvature
+
+```{r US_Albers_Equal_Area}
+ggplot(us_states) +
+  geom_sf() +
+  coord_sf(crs = 'ESRI:102003') +
+  theme_void()
+```
+
+-   **tigris** has a utility function called `shift_geometry()` which works by re-plotting Alaska, Hawaii, and Puerto Rico (but not other US territories)
+
+```{r}
+us_states_shifted <- shift_geometry(us_states)
+
+ggplot(us_states_shifted) +
+  geom_sf() +
+  theme_void()
+```
+
+-   It has optional arguments:
+
+    -   `preserve_area` which, when set to `FALSE` by default, resizes Hawaii and Alaska relative to the US's area
+
+    -   `position` which sets the non-contiguous states and territory to `below` or `outside` the plot relative to the contiguous States
+
+```{r}
+us_states_outside <- shift_geometry(us_states,
+                                    preserve_area = TRUE,
+                                    position = "outside")
+
+ggplot(us_states_outside) +
+  geom_sf() +
+  theme_void()
+```
 
 ### Converting polygons to points
 
+-   Sometimes we may want to map features that are, by default, polygonal in nature - i.e. the relative location of cities on a Statewide map.
+
+    -   One technique we can use is the computation of a centroid for the polygons using `st_centroid()`
+
+-   As we can see below, the polygons for the Cities add unnecessary clutter for our map, relative to what we are trying to portray.
+
+```{r initial_texas_cities_map}
+tx_places <- places("TX", cb = TRUE) %>% 
+  filter(NAME %in% c("Dallas", "Fort Worth", "Houston",
+                     "Austin", "San Antonio", "El Paso")) %>% 
+  st_transform(6580)
+
+tx_outline <- states(cb = TRUE) %>% 
+  filter(NAME == "Texas") %>% 
+  st_transform(6580)
+
+ggplot() +
+  geom_sf(data = tx_outline) +
+  geom_sf(data = tx_places, fill = "red", color = NA) +
+  theme_void()
+```
+
+-   By computing centroids, we have a much cleaner and more communicative map.
+
+```{r}
+tx_centroids <- st_centroid(tx_places)
+
+ggplot() + 
+  geom_sf(data = tx_outline) + 
+  geom_sf(data = tx_centroids, color = "red", size = 3) + 
+  theme_void()
+
+```
+
 ### Exploding multipolygon geometries to single parts
 
+-   The census returns areas as multipolygons because often, areas have detached elements, such as islands, that are still in the same census area.
+
+```{r lee_county_florida}
+lee <- fl_projected %>% 
+  filter(NAME == "Lee")
+```
+
+```{r}
+mapview(lee)
+```
+
+-   the county multipolygon is composed of four entities:
+
+    -   a mainland area
+
+    -   three disconnected island areas
+
+-   We can "explode" the multipolygon to extract specific features using `st_cast()`
+
+```{r}
+lee_singlepart <- st_cast(lee, "POLYGON")
+
+lee_singlepart
+```
+
+-   we can now interact with each element as a discrete polygon
+
+```{r}
+sanibel_island <- lee_singlepart[2, ]
+mapview(sanibel_island)
+```
+
 ## 5.6 Exercises
+
+-   get a specific state/county geography of your choice
+
+```{r}
+los_angeles_county <- tracts("CA", "Los Angeles", cb = TRUE)
+```
+
+-   plot it using `plot()`, `geom_sf()`, and `mapview()`
+
+```{r plot}
+plot(los_angeles_county$geometry)
+```
+
+```{r geom_sf}
+ggplot() + 
+  geom_sf(data = los_angeles_county)
+```
+
+```{r mapview}
+mapview(los_angeles_county)
+```
+
+-   use `suggest_crs()` to identify an appropriate projected CRS, then transform with `st_transform()`
+
+```{r}
+crsuggest::suggest_crs(los_angeles_county) %>% View() # doesn't recommend the LA-specific zone 5
+la_county_projected <- los_angeles_county %>% st_transform(26945)
+
+ggplot() +
+  geom_sf(data = la_county_projected) +
+  coord_sf(crs = 26945, datum = 26945)
+```
