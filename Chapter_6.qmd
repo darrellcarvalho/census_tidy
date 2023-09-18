@@ -281,6 +281,32 @@ tm_shape(hennepin_black) +
 
 ### Choosing a color palette
 
+-   Consider your data
+
+    -   quantitative data and statistical mapping means choosing palettes that show variation effectively
+
+    -   usually, this will be sequential palettes
+
+        -   Sometimes, we will go from light to dark \<-\> low to high, but other palettes show lighter colors more intensely, in which case we may choose the alternative.
+
+    -   Diverging palettes are useful for showing extremities along some axis with polarity
+
+        -   I.E. where there is some normal median value and extremes at both ends
+
+        -   In the context of Census mapping, diverging palettes are useful for Change over Time, with the center representing no change, and one color divergence representing a decrease over time while the other divergence represents increase over time.
+
+    -   Categorical/Qualitative data is best mapped with Qualitative palettes where colors are unique for each class, and do not imply an ordering of classes
+
+    -   Tools for palette selection include:
+
+        -   [ColorBrewer](https://colorbrewer2.org/)
+
+        -   the **viridis** library
+
+        -   `tmaptools::palette_explorer()` includes selections from both of the above
+
+        -   
+
 ### Alternative map types with tmap
 
 ## 6.4 Cartographic workflows with non-Census data
