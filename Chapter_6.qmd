@@ -532,15 +532,211 @@ tm_shape(boston_se_data) +
 
 ## 6.5 Interactive mapping
 
+-   The book discusses several approaches to producing interactive, non-static maps
+
 ### Interactive mapping with Leaflet
 
+-   A popular webmap framework is the Leaflet Javascript Library
+
+    -   in r, we can use the **leaflet package**
+
+-   We will get data on percent of 25+ yo with bachelor's degree or higher
+
+    -   we will look at the 2020 5Y ACS data
+
+    -   We will pull by Census Tract
+
+    -   We will pull for Dallas County, Texas
+
+```{r dallas-BAs}
+dallas_bachelors <- get_acs(
+  geography = "tract",
+  variables = "DP02_0068P",
+  year = 2020,
+  state = "TX",
+  county = "Dallas",
+  geometry = TRUE
+)
+```
+
+-   Mapview gives us the ability to use `zcol` to define a variable for choropleth mapping
+
+```{r}
+mapview(dallas_bachelors, zcol = "estimate")
+```
+
+-   **tmap** also has a view mode that acts as an interactive Leaflet plot
+
+```{r}
+tmap_mode("view")
+
+tm_shape(dallas_bachelors) +
+  tm_fill(col = "estimate", palette = "magma",
+          alpha = 0.5)
+
+tmap_mode("plot")
+```
+
+-   the **leaflet** package gives more fine-grained control
+
+    -   to reproduce the above examples with **leaflet**, run the following code chunks
+
+```{r}
+# define the color palette for 'magma'
+pal <- colorNumeric(
+  palette = "magma",
+  domain = dallas_bachelors$estimate
+)
+
+pal(c(10, 20, 30, 40, 50))
+
+leaflet() %>% # initialize map
+  addProviderTiles(providers$Stamen.TonerLite) %>% # add basemap
+  addPolygons(data = dallas_bachelors, # add census tracts
+              color = ~pal(estimate),
+              weight = 0.5,
+              smoothFactor = 0.2,
+              fillOpacity = 0.5,
+              label = ~estimate) %>%
+  addLegend( # add legend
+    position = "bottomright",
+    pal = pal,
+    values = dallas_bachelors$estimate,
+    title = "% with bachelor's<br/>degree"
+  )
+```
+
 ### Alternative approaches to interactive mapping
+
+-   **leaflet** uses tile maps projected to Web Mercator
+
+    -   this distorts area near poles
+
+-   note the distortion of Alaska and near-invisibility of Alaska below
+
+```{r}
+us_value <- get_acs(
+  geography = "state",
+  variables = "B25077_001",
+  year = 2019,
+  survey = "acs1",
+  geometry = TRUE,
+  resolution = "20m"
+)
+
+us_pal <- colorNumeric(
+  palette = "plasma",
+  domain = us_value$estimate
+)
+
+leaflet() %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(data = us_value,
+              color = ~us_pal(estimate),
+              weight = 0.5,
+              smoothFactor = 0.2,
+              fillOpacity = 0.5,
+              label = ~estimate) %>%
+  addLegend(
+    position = "bottomright",
+    pal = us_pal,
+    values = us_value$estimate,
+    title = "Median home value"
+  )
+```
+
+-   If we want to make an interactive map for the whole of the US States, we can use packages such as **ggiraph**
+
+    -   This adds interactivity to a ggplot of the maps, rather than projecting onto a Leaflet webmap
+
+```{r}
+us_value_shifted <- us_value %>%
+  shift_geometry(position = "outside") %>%
+  mutate(tooltip = paste(NAME, estimate, sep = ": "))
+
+gg <- ggplot(us_value_shifted, aes(fill = estimate)) + 
+  geom_sf_interactive(aes(tooltip = tooltip, data_id = NAME), 
+                      size = 0.1) + 
+  scale_fill_viridis_c(option = "plasma", labels = label_dollar()) + 
+  labs(title = "Median housing value by State, 2019",
+       caption = "Data source: 2019 1-year ACS, US Census Bureau",
+       fill = "ACS estimate") + 
+  theme_void() 
+  
+girafe(ggobj = gg) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"), 
+                 opts_zoom(max = 10))
+```
 
 ## 6.6 Advanced examples
 
 ### Mapping migration flows
 
+-   **tidycensus** can call the ACS Migration Flows API
+
+    -   we can map migration flows by setting `geometry = TRUE` in the `get_flows()` function
+
+    -   this returns two point columns linking locations in the flow
+
+-   Below we pull data for Travis County, Texas, a site of significant in-migration of late
+
+```{r}
+travis_inflow <- get_flows(
+  geography = "county",
+  state = "TX",
+  county = "Travis",
+  geometry = TRUE
+) %>% 
+  filter(variable == "MOVEDIN") %>% 
+  na.omit() %>% 
+  arrange(desc(estimate))
+```
+
+-   Now we can map the migration flows, IF we use **mapdeck** and are willing to set up API calls from MapBox, which requires providing credit card payment information
+
 ### Linking maps and charts
+
+-   It is often useful to link visuals in an interactive manner
+
+-   below we link a map produced with **ggplot2** to a plot of error bars for the related margins of error
+
+    -   note that as one hovers over a polygon in the map, its affiliated error bar is highlighted
+
+```{r}
+vt_income <- get_acs(
+  geography = "county",
+  variables = "B19013_001",
+  state = "VT",
+  year = 2020,
+  geometry = TRUE
+) %>% 
+  mutate(NAME = str_remove(NAME, " County, Vermont"))
+
+vt_map <- ggplot(vt_income, aes(fill = estimate)) +
+  geom_sf_interactive(aes(data_id = GEOID)) +
+  scale_fill_distiller(palette = "Greens",
+                       direction = 1,
+                       guide = "none") +
+  theme_void()
+
+vt_plot <- ggplot(vt_income, aes(x = estimate, y = reorder(NAME, estimate),
+                                 fill = estimate)) +
+  geom_errorbar(aes(xmin = estimate - moe, xmax = estimate + moe)) +
+  geom_point_interactive(color = "black", size = 4, shape = 21,
+                         aes(data_id = GEOID)) +
+  scale_fill_distiller(palette = "Greens", direction = 1,
+                       labels = label_dollar()) +
+  scale_x_continuous(labels = label_dollar()) +
+  labs(title = "Household income by county in Vermont",
+       subtitle = "2016-2020 American Community Survey",
+       y = "",
+       x = "ACS estimate (bars represent margin of error)",
+       fill = "ACS estimate") +
+  theme_minimal(base_size = 14)
+
+girafe(ggobj = vt_map + vt_plot, width_svg = 10, height_svg = 5) %>% 
+  girafe_options(opts_hover(css = "fill:cyan;"))
+```
 
 ### Reactive mapping with Shiny
 
