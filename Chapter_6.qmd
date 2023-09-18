@@ -34,6 +34,7 @@ library(patchwork)
 library(shiny)
 library(htmlwidgets)
 library(sf)
+library(tigris)
 ```
 
 -   This chapter shows how to map Census data by using linked `geometry` parameters.
@@ -305,15 +306,229 @@ tm_shape(hennepin_black) +
 
         -   `tmaptools::palette_explorer()` includes selections from both of the above
 
-        -   
-
 ### Alternative map types with tmap
+
+-   Choropleth maps are best for "rates, percentages, or statistical values that are normalized for the population of areal units."
+
+    -   not good for raw counts
+
+    -   can make comparison difficult
+
+-   Graduated symbols use shape symbols that scale in size relative to the data
+
+    -   bubble map below shows bubbles where size represents count
+
+```{r bubble-hennepin}
+tm_shape(hennepin_black) +
+  tm_polygons() +
+  tm_bubbles(size = "value", alpha = 0.5,
+             col = "navy",
+             title.size = "Non-Hispanic Black - 2020 US Census") +
+  tm_layout(legend.outside = TRUE,
+            legend.outside.position = "bottom")
+```
+
+-   Faceted maps are grids of univariate maps where each map shows a different variable, allowing comparison between variables without trying to force them all onto a single visualization.
+
+-   **tmap** allows for the creation of faceted maps using `tm_facets()`
+
+-   weaknesses of faceted maps include:
+
+    -   shared legend and classification - suppresses within-group variation
+
+    -   difficult to discern diversity of areas
+
+```{r hennepin-facet}
+tm_shape(hennepin_race) +
+  tm_facets(by = "variable", scale.factor = 4) +
+  tm_fill(col = "percent",
+          style = "quantile",
+          n = 6,
+          palette = "Blues",
+          title = "Percent (2020 US Census)",) +
+  tm_layout(bg.color = "grey",
+            legend.position = c(-0.7, 0.15),
+            panel.label.bg.color = "white")
+```
+
+-   Dot-density maps randomly place dots in polygons
+
+    -   the quantity of dots is proportional to the size of the attribute(s) plotted
+
+    -   different colored dots can represent different categories of a variable
+
+-   **tidycensus** has `as_dot_density()` to prepare Census data for dot-density mapping
+
+    -   it takes a `value` column as an argument for the attribute to be mapped
+
+    -   `values per_dot` argument determines the proportion each dot represents of the whole
+
+    -   `group` argument determines how to partition dots, if subgroups exist within the data
+
+```{r hennepin-dots}
+hennepin_dots <- hennepin_race %>% 
+  as_dot_density(
+    value = "value",
+    values_per_dot = 100,
+    group = "variable"
+  )
+```
+
+-   the map is created with **tmap** `tm_dots()` function
+
+    -   `tm_polygons()` provides the background
+
+```{r hennepin-dot-density-map}
+background_tracts <- hennepin_race
+
+tm_shape(background_tracts) +
+  tm_polygons(col = "white",
+              border.col = "grey") +
+  tm_shape(hennepin_dots) +
+  tm_dots(col = "variable",
+          palette = "Set1",
+          size = 0.005,
+          title = "1 dot = 100 people") +
+  tm_layout(legend.outside = TRUE,
+            title = "Race/ethnicity, \n2020 US Census")
+```
+
+-   dot-density maps risk overplotting (obscuring data by dots being too close and becoming indiscernible
+
+-   dots in census tracts may be placed where people do not/cannot live, as water features, etc. are not taken into accounts
+
+-   dots follow boundaries rather than the whole map when randomly plotting; this can create the visual impression in sudden breaks in density
+
+-   one solution is *dasymetric dot-density mapping* - removing areas from polygons where people can't live before plotting the dots.
+
+    -   **tidycensus** `as_dot_density()` function includes an `erase_water` function to remove water areas
 
 ## 6.4 Cartographic workflows with non-Census data
 
+-   we may have data that is at a Census geography scale, but is not ACS or Census data proper
+
+-   with this data we cannot pull geometry down using **tidycensus** `geometry = TRUE` argument
+
+-   we may instead get shapes with **tigris** and join the data we have to Census geographies for visualization
+
 ### National election mapping with tigris shapes
 
+-   Election data is not provided by the Census bureau
+
+-   we will map data from the Cook Political Report for 2020 US Presidential election results
+
+-   first we acquire and import the data
+
+```{r political-map}
+vote2020 <- read_csv("data/us_vote_2020.csv")
+
+names(vote2020)
+```
+
+-   then we get the State-level geography we want with **tigris**
+
+```{r states-pull}
+us_states <- states(cb = TRUE, resolution = "20m") %>% 
+  filter(NAME != "Puerto Rico") %>% 
+  shift_geometry()
+```
+
+-   finally, we use **dplyr** `left_join()` to join the data table to the State geographies
+
+```{r states-join}
+us_states_joined <- us_states %>% 
+  left_join(vote2020, by = c("NAME" = "state"))
+
+# Quality check: did all NAME match with a state
+# we expect a false to be returned for each State and DC if the "state" name matches the "NAME" name
+table(is.na(us_states_joined$state))
+
+```
+
+-   we used a `left_join()` and started with `us_states` because we are joining the data TO the states.
+
+-   now we plot
+
+```{r election-map}
+ggplot(us_states_joined, aes(fill = called)) +
+  geom_sf(color = "white", lwd = 0.2) +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme_void() +
+  labs(fill = "Party",
+       title = " 2020 US presidential election results by state",
+       caption = "Note: Nebraska and Main split electoral college votes by congressional district")
+```
+
 ### Understanding and working with ZCTAs
+
+-   many agencies only release data as granular as ZIP codes
+
+    -   ZIP codes represent *collections* of USPS routes, PO boxes, or individual buildings - they aren't areal units
+
+-   US Census Bureau creates ZIP Code Tabulation Areas to approximate ZIP Code mapping
+
+    -   A ZCTAs is a shape built up by Census blocks based on their most common ZIP Code
+
+-   The IRS "Statistics of Income" data isn't available at geographies more detailed than the ZIP Code
+
+```{r irs-data}
+irs_data <- read_csv("https://www.irs.gov/pub/irs-soi/18zpallnoagi.csv")
+
+ncol(irs_data)
+```
+
+-   The data has 153 columns; one is ZIPCODE
+
+-   To map self-employment income, we can keep `N09400` - the number of tax returns with self-employment tax, and `N1` - which represents the total number of returns
+
+```{r self-employment}
+self_employment <- irs_data %>% 
+  select(ZIPCODE, self_emp = N09400, total = N1)
+```
+
+-   we can now subset and map data in Boston, MA
+
+```{r}
+boston_zctas <- zctas(
+  cb = TRUE,
+  starts_with = c("021", "022", "024"),
+  year = 2018
+)
+
+mapview(boston_zctas)
+```
+
+-   We can join the data-sets on `"ZCTA5CE10"` and `"ZIPCODE"`
+
+```{r}
+boston_se_data <- boston_zctas %>% 
+  left_join(self_employment, by = c("GEOID10" = "ZIPCODE")) %>% 
+  mutate(pct_self_emp = 100 * (self_emp / total)) %>% 
+  select(GEOID10, self_emp, pct_self_emp)
+```
+
+-   We can finally build some plots of the data; first, we'll make a choropleth map
+
+```{r}
+tm_shape(boston_se_data, projection = 26918) +
+  tm_fill(col = "pct_self_emp",
+          palette = "Purples",
+          title = "% self-employed,\n2018 IRS SOI data") +
+  tm_layout(legend.position = c("LEFT", "BOTTOM"))
+```
+
+-   the choropleth map shows higher rates of self-employment in suburbs
+
+-   If we want to see total numbers of filings, we would use `self_emp` column and visualize it as a bubble map
+
+```{r}
+tm_shape(boston_se_data) +
+  tm_polygons() +
+  tm_bubbles(size = "self_emp",
+             alpha = 0.5,
+             col = "navy",
+             title.size = "Self-employed filers,\n2018 IRS SOI data")
+```
 
 ## 6.5 Interactive mapping
 
