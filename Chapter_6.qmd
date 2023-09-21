@@ -562,19 +562,19 @@ dallas_bachelors <- get_acs(
 -   Mapview gives us the ability to use `zcol` to define a variable for choropleth mapping
 
 ```{r}
-mapview(dallas_bachelors, zcol = "estimate")
+# mapview(dallas_bachelors, zcol = "estimate")
 ```
 
 -   **tmap** also has a view mode that acts as an interactive Leaflet plot
 
 ```{r}
-tmap_mode("view")
-
-tm_shape(dallas_bachelors) +
-  tm_fill(col = "estimate", palette = "magma",
-          alpha = 0.5)
-
-tmap_mode("plot")
+# tmap_mode("view")
+# 
+# tm_shape(dallas_bachelors) +
+#   tm_fill(col = "estimate", palette = "magma",
+#           alpha = 0.5)
+# 
+# tmap_mode("plot")
 ```
 
 -   the **leaflet** package gives more fine-grained control
@@ -582,28 +582,28 @@ tmap_mode("plot")
     -   to reproduce the above examples with **leaflet**, run the following code chunks
 
 ```{r}
-# define the color palette for 'magma'
-pal <- colorNumeric(
-  palette = "magma",
-  domain = dallas_bachelors$estimate
-)
-
-pal(c(10, 20, 30, 40, 50))
-
-leaflet() %>% # initialize map
-  addProviderTiles(providers$Stamen.TonerLite) %>% # add basemap
-  addPolygons(data = dallas_bachelors, # add census tracts
-              color = ~pal(estimate),
-              weight = 0.5,
-              smoothFactor = 0.2,
-              fillOpacity = 0.5,
-              label = ~estimate) %>%
-  addLegend( # add legend
-    position = "bottomright",
-    pal = pal,
-    values = dallas_bachelors$estimate,
-    title = "% with bachelor's<br/>degree"
-  )
+# # define the color palette for 'magma'
+# pal <- colorNumeric(
+#   palette = "magma",
+#   domain = dallas_bachelors$estimate
+# )
+# 
+# pal(c(10, 20, 30, 40, 50))
+# 
+# leaflet() %>% # initialize map
+#   addProviderTiles(providers$Stamen.TonerLite) %>% # add basemap
+#   addPolygons(data = dallas_bachelors, # add census tracts
+#               color = ~pal(estimate),
+#               weight = 0.5,
+#               smoothFactor = 0.2,
+#               fillOpacity = 0.5,
+#               label = ~estimate) %>%
+#   addLegend( # add legend
+#     position = "bottomright",
+#     pal = pal,
+#     values = dallas_bachelors$estimate,
+#     title = "% with bachelor's<br/>degree"
+#   )
 ```
 
 ### Alternative approaches to interactive mapping
@@ -615,34 +615,34 @@ leaflet() %>% # initialize map
 -   note the distortion of Alaska and near-invisibility of Alaska below
 
 ```{r}
-us_value <- get_acs(
-  geography = "state",
-  variables = "B25077_001",
-  year = 2019,
-  survey = "acs1",
-  geometry = TRUE,
-  resolution = "20m"
-)
-
-us_pal <- colorNumeric(
-  palette = "plasma",
-  domain = us_value$estimate
-)
-
-leaflet() %>%
-  addProviderTiles(providers$Stamen.TonerLite) %>%
-  addPolygons(data = us_value,
-              color = ~us_pal(estimate),
-              weight = 0.5,
-              smoothFactor = 0.2,
-              fillOpacity = 0.5,
-              label = ~estimate) %>%
-  addLegend(
-    position = "bottomright",
-    pal = us_pal,
-    values = us_value$estimate,
-    title = "Median home value"
-  )
+# us_value <- get_acs(
+#   geography = "state",
+#   variables = "B25077_001",
+#   year = 2019,
+#   survey = "acs1",
+#   geometry = TRUE,
+#   resolution = "20m"
+# )
+# 
+# us_pal <- colorNumeric(
+#   palette = "plasma",
+#   domain = us_value$estimate
+# )
+# 
+# leaflet() %>%
+#   addProviderTiles(providers$Stamen.TonerLite) %>%
+#   addPolygons(data = us_value,
+#               color = ~us_pal(estimate),
+#               weight = 0.5,
+#               smoothFactor = 0.2,
+#               fillOpacity = 0.5,
+#               label = ~estimate) %>%
+#   addLegend(
+#     position = "bottomright",
+#     pal = us_pal,
+#     values = us_value$estimate,
+#     title = "Median home value"
+#   )
 ```
 
 -   If we want to make an interactive map for the whole of the US States, we can use packages such as **ggiraph**
@@ -650,22 +650,22 @@ leaflet() %>%
     -   This adds interactivity to a ggplot of the maps, rather than projecting onto a Leaflet webmap
 
 ```{r}
-us_value_shifted <- us_value %>%
-  shift_geometry(position = "outside") %>%
-  mutate(tooltip = paste(NAME, estimate, sep = ": "))
-
-gg <- ggplot(us_value_shifted, aes(fill = estimate)) + 
-  geom_sf_interactive(aes(tooltip = tooltip, data_id = NAME), 
-                      size = 0.1) + 
-  scale_fill_viridis_c(option = "plasma", labels = label_dollar()) + 
-  labs(title = "Median housing value by State, 2019",
-       caption = "Data source: 2019 1-year ACS, US Census Bureau",
-       fill = "ACS estimate") + 
-  theme_void() 
-  
-girafe(ggobj = gg) %>%
-  girafe_options(opts_hover(css = "fill:cyan;"), 
-                 opts_zoom(max = 10))
+# us_value_shifted <- us_value %>%
+#   shift_geometry(position = "outside") %>%
+#   mutate(tooltip = paste(NAME, estimate, sep = ": "))
+# 
+# gg <- ggplot(us_value_shifted, aes(fill = estimate)) + 
+#   geom_sf_interactive(aes(tooltip = tooltip, data_id = NAME), 
+#                       size = 0.1) + 
+#   scale_fill_viridis_c(option = "plasma", labels = label_dollar()) + 
+#   labs(title = "Median housing value by State, 2019",
+#        caption = "Data source: 2019 1-year ACS, US Census Bureau",
+#        fill = "ACS estimate") + 
+#   theme_void() 
+#   
+# girafe(ggobj = gg) %>%
+#   girafe_options(opts_hover(css = "fill:cyan;"), 
+#                  opts_zoom(max = 10))
 ```
 
 ## 6.6 Advanced examples
@@ -693,6 +693,18 @@ travis_inflow <- get_flows(
 ```
 
 -   Now we can map the migration flows, IF we use **mapdeck** and are willing to set up API calls from MapBox, which requires providing credit card payment information
+
+```{r}
+# NOTE THAT NO TOKEN IS ASSIGNED
+# travis_inflow %>%
+#   slice_max(estimate, n = 30) %>%
+#   mutate(weight = estimate / 500) %>%
+#   mapdeck(token = token) %>%
+#   add_arc(origin = "centroid2",
+#           destination = "centroid1",
+#           stroke_width = "weight",
+#           update_view = FALSE) 
+```
 
 ### Linking maps and charts
 
@@ -740,10 +752,253 @@ girafe(ggobj = vt_map + vt_plot, width_svg = 10, height_svg = 5) %>%
 
 ### Reactive mapping with Shiny
 
+-   We can build interactive dashboard applications using Shiny
+
+-   Below, the author created a Shiny application to look at Minneapolis race data interactively
+
+```{r}
+# # app.R
+# library(tidycensus)
+# library(shiny)
+# library(leaflet)
+# library(tidyverse)
+# 
+# twin_cities_race <- get_acs(
+#   geography = "tract",
+#   variables = c(
+#     hispanic = "DP05_0071P",
+#     white = "DP05_0077P",
+#     black = "DP05_0078P",
+#     native = "DP05_0079P",
+#     asian = "DP05_0080P",
+#     year = 2019
+#   ),
+#   state = "MN",
+#   county = c("Hennepin", "Ramsey", "Anoka", "Washington",
+#              "Dakota", "Carver", "Scott"),
+#   geometry = TRUE
+# ) 
+# 
+# groups <- c("Hispanic" = "hispanic",
+#             "White" = "white",
+#             "Black" = "black",
+#             "Native American" = "native",
+#             "Asian" = "asian")
+# 
+# ui <- fluidPage(
+#   sidebarLayout(
+#     sidebarPanel(
+#       selectInput(
+#         inputId = "group",
+#         label = "Select a group to map",
+#         choices = groups
+#       )
+#     ),
+#     mainPanel(
+#       leafletOutput("map", height = "600")
+#     )
+#   )
+# )
+# 
+# server <- function(input, output) {
+#   
+#   # Reactive function that filters for the selected group in the drop-down menu
+#   group_to_map <- reactive({
+#     filter(twin_cities_race, variable == input$group)
+#   })
+#   
+#   # Initialize the map object, centered on the Minneapolis-St. Paul area
+#   output$map <- renderLeaflet({
+# 
+#     leaflet(options = leafletOptions(zoomControl = FALSE)) %>%
+#       addProviderTiles(providers$Stamen.TonerLite) %>%
+#       setView(lng = -93.21,
+#               lat = 44.98,
+#               zoom = 8.5)
+# 
+#   })
+#   
+#   observeEvent(input$group, {
+#     
+#     pal <- colorNumeric("viridis", group_to_map()$estimate)
+#     
+#     leafletProxy("map") %>%
+#       clearShapes() %>%
+#       clearControls() %>%
+#       addPolygons(data = group_to_map(),
+#                   color = ~pal(estimate),
+#                   weight = 0.5,
+#                   fillOpacity = 0.5,
+#                   smoothFactor = 0.2,
+#                   label = ~estimate) %>%
+#       addLegend(
+#         position = "bottomright",
+#         pal = pal,
+#         values = group_to_map()$estimate,
+#         title = "% of population"
+#       )
+#   })
+#   
+# }
+# 
+# shinyApp(ui = ui, server = server)
+```
+
 ## 6.7 Working with software outside of R for cartographic projects
 
 ### Exporting maps from R
 
+-   you can export **ggplot2** maps using `ggsave()`
+
+    -   when using `theme_void()`, set a `bg` color or the map will be transparent
+
+-   `tmap_save()` exports **tmap** maps
+
+    -   `tmap_save()` requires an object to export
+
+```{r}
+hennepin_map <- tm_shape(hennepin_black) +
+  tm_polygons(col = "percent",
+              style = "jenks",
+              n = 5,
+              palette = "Purples",
+              title = "ACS estimate",
+              legend.hist = TRUE) +
+  tm_layout(title = "Percent Black\nby Census tract",
+            frame = FALSE,
+            legend.outside = TRUE,
+            bg.color = "grey70",
+            legend.hist.width = 5,
+            fontfamily = "Verdana")
+```
+
+-   Once you have an object to export, `tmap_save()` gives you a lot of control over specifications
+
+```{r}
+tmap_save(
+  tm = hennepin_map,
+  filename = "./images/hennepin_map.png",
+  height = 5.5,
+  width = 8,
+  dpi = 300
+)
+```
+
+-   interactive maps can be written to HTML using `htmlwidgets::saveWidget()`
+
+    -   assign the Leaflet map to a variable
+
+    -   pass the variable to `saveWidget()`
+
+    -   **mapview** maps can be exported the same way, but require a call to the `map` slot using `@`
+
+        -   this is demonstrated below
+
+    -   `selfcontained = TRUE` bundles assets in the html file
+
+        -   setting it to FALSE creates a separate directory for assets which is then referenced by the HTML
+
+    -   **tmap** interactive maps are saved the same way, only using `tmap_save()` instead of `saveWidget()`
+
+```{r}
+dallas_map <- mapview(dallas_bachelors, zcol = "estimate")
+
+saveWidget(dallas_map@map, "dallas_mapview_map.html", selfcontained = TRUE)
+```
+
 ### Interoperability with other visualization software
 
+-   data pulled down using **tidycensus** can be exported to a shapefile for importing into other GIS software
+
+    -   this is done with **sf** package's `st_write()` function
+
+```{r dc-export}
+dc_income <- get_acs(
+  geography = "tract",
+  variables = "B19013_001",
+  state = "DC",
+  year = 2020,
+  geometry = TRUE
+)
+
+st_write(dc_income, "dc_income.shp")
+```
+
+You can also develop R scripts that function as QGIS plugins using QGIS's Processing R Provider plugin.
+
+1.  Install the plugin in QGIS
+
+2.  click Processing \> Toolbox
+
+3.  Click the R icon
+
+4.  Click Create New R Script...
+
+5.  Write your script in the R editor
+
+    -   When writing the script, define the parameters at the beginning of the script with \##
+
+6.  Once you've finished the script, save it with an appropriate tool name and the extension `.rsx`
+
+7.  You may now open it in QGIS as a tool using the Processing Toolbox, GUI and everything
+
 ## 6.8 Exercises
+
+-   Exercise 1: make a race/ethnicity map for a different county
+
+```{r la-dot-map}
+los_angeles_race <- get_decennial(
+  geography = "tract",
+  state = "CA",
+  county = "Los Angeles",
+  variables = c(
+    Hispanic = "P2_002N",
+    White = "P2_005N",
+    Black = "P2_006N",
+    Native = "P2_007N",
+    Asian = "P2_008N"
+  ),
+  summary_var = "P2_001N",
+  year = 2020,
+  geometry = TRUE
+) %>% 
+  mutate(percent = 100 * (value / summary_value))
+
+los_angeles_dots <- los_angeles_race %>% 
+  as_dot_density(
+    value = "value",
+    values_per_dot = 100,
+    group = "variable"
+)
+
+background_tracts <- filter(los_angeles_race, variable == "White")
+
+# tmap_mode("view")
+
+tm_shape(st_make_valid(background_tracts)) + 
+  tm_polygons(col = "white", 
+              border.col = "grey") + 
+  tm_shape(los_angeles_dots) +
+  tm_dots(col = "variable", 
+          palette = "Set1",
+          size = 0.005, 
+          title = "1 dot = 100 people") + 
+  tm_layout(legend.outside = TRUE,
+            title = "Race/ethnicity,\n2020 US Census")
+
+# tmap_mode("plot")
+```
+
+-   Exercise 2: find and map a different variable using tidycensus::load_variables()
+
+```{r multiracial-la-census-tracts}
+multir_la <- get_decennial("tract", variables = "P1_009N", year = 2020, summary_var = "P1_001N", state = "CA", county = "Los Angeles", geometry = TRUE) %>% mutate(percent = 100 * (value / summary_value))
+
+multir_la_clean <- multir_la %>% filter(summary_value >= 100)
+
+ggplot() +
+  geom_sf(data = multir_la, fill = "grey", color = NA) +
+  geom_sf(data = multir_la_clean, aes(fill = percent), color = NA) +
+  theme_gray()
+
+```
