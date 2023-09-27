@@ -1,0 +1,262 @@
+---
+title: "Chapter 7 Notes"
+prefer-html: true
+format: 
+  docx: 
+    toc: true
+    highlight-style: arrow
+    fig-format: retina
+    fig-dpi: 300
+    fig-height: 6
+    fig-width: 6
+editor: visual
+execute:
+  echo: fenced
+  error: true
+  output: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Chapter 7 Notes: Spatial Analysis with US Census data
+
+-   defines *spatial analysis* as "performance of analytic tasks that explicitly incorporate the spatial properties of a dataset."
+
+-   Positions R as a GIS/GIS Substitute
+
+-   **sp** and **rgeos** as old standards; **sf** as new standard
+
+-   Chapter focuses on integrating **sf**, **tidycensus**, and **tigris**
+
+## 7.1 Spatial Overlay
+
+-   defines *spatial overlay* as the layering of different geographic datasets with different geometries over each other to observe patterns and relations
+
+### aligning coordinate reference systems
+
+-   all layers need same CRS for spatial overlay
+
+-   **tigris** and **tidycensus** datasets default to NAD 1983 geographic reference system
+
+    -   **sf** uses **s2** for three-dimensional overlay
+
+        -   This can slow things down compared to projected coordinate reference system
+
+-   Author recommends following workflow:
+
+    1.   Download datasets planned for use
+
+    2.  identify appropriate CRS for layers (use `crsuggest::suggest_crs()`)
+
+    3.  transform the dataset to projected coordinate system (use `sf::st_transform()`)
+
+    4.  Compute spatial overlay
+
+### Identifying geometries within a metropolitan area
+
+-   Core-based statistical areas (i.e. metropolitan/micropolitan areas) often used for regional analysis
+
+-   "Core-based statistical areas are defined as agglomerations of counties that are oriented around a central core or cores, and have a significant degree of population interaction as measured through commuting patterns."
+
+    -   Metropolitan areas are CBSAs with pop \> 50K
+
+#### Example: Kansas City metropolitan area
+
+1.   use **tigris** to get 2020 census tracts for two states in Kansas City metro area
+
+2.  get boundary of Kansas City metro area
+
+```{r KC-metro}
+library(tigris)
+library(tidyverse)
+library(sf)
+options(tigris_use_cache = TRUE)
+
+# Author uses NAD83(2011) Kansas Regional Coordinate System Zone 11)
+
+ks_mo_tracts <- map_dfr(c("KS", "MO"), ~{
+  tracts(.x, cb = TRUE, year = 2020)
+}) %>% 
+  st_transform(8528)
+
+kc_metro <- core_based_statistical_areas(cb = TRUE, year = 2020) %>% 
+  filter(str_detect(NAME, "Kansas City")) %>% 
+  st_transform(8528)
+
+ggplot() +
+  geom_sf(data = ks_mo_tracts, fill = "white", color = "grey") +
+  geom_sf(data = kc_metro, fill = NA, color = "red") +
+  theme_void()
+```
+
+-   the red boundary shows the outline of the Kansas City Metropolitan area; the Grey boundaries represent census tracts.
+
+-   We can extract the data within the red boundary using spatial subsetting
+
+### Spatial Subsets and spatial predicates
+
+-   subsetting uses the extent of one dataset to extract features from another dataset using *co-location* defined by a *spatial predicate*
+
+    -   Spatial subsets can be expressed with base R indexing
+
+```{r KSC-subsetting}
+kc_tracts <- ks_mo_tracts[kc_metro, ]
+
+ggplot() +
+  geom_sf(data = kc_tracts, fill = "white", color = "grey") +
+  geom_sf(data = kc_metro, fill = NA, color = "red") +
+  theme_void()
+```
+
+-   This returns all census tracts *intersecting* the Kansas City Metro Area boundary
+
+    -   the default spatial predicate is `st_intersects()`
+
+-   If we want just those tracts *within* the boundary, we can use `st_within()` with `st_filter()` (or using base index syntax as above, but including `op = st_within` argument)
+
+```{r KCM-within}
+kc_tracts_within <- ks_mo_tracts %>% 
+  st_filter(kc_metro, .predicate = st_within)
+
+# Alternative:
+kc_metro2 <- kc_tracts[kc_metro, op = st_within]
+
+ggplot() +
+  geom_sf(data = kc_tracts_within, fill = "white", color = "grey") +
+  geom_sf(data = kc_metro, fill = NA, color = "red") +
+  theme_void()
+```
+
+## 7.2 Spatial Joins
+
+-   Spatial Joins transfer attributes between spatial layers
+
+    -   where a table join uses a key field to join, spatial joins use spatial predicates
+
+        -   **sf** uses `st_join()` for spatial joins
+
+### Point-in-polygon spatial joins
+
+-   Suppose we are a health data analysis
+
+-   We need to determine \$ of residents 65+ w/o insurance in patients' neighborhoods
+
+    -   we have patients IDs, lon, and lat for each 'patient'
+
+```{r gainsville}
+library(tidyverse)
+library(sf)
+library(tidycensus)
+library(mapview)
+
+gainesville_patients <- tibble(
+  patient_id = 1:10,
+  longitude = c(-82.308131, -82.311972, -82.361748, -82.374377, 
+                -82.38177, -82.259461, -82.367436, -82.404031, 
+                -82.43289, -82.461844),
+  latitude = c(29.645933, 29.655195, 29.621759, 29.653576, 
+               29.677201, 29.674923, 29.71099, 29.711587, 
+               29.648227, 29.624037))
+```
+
+-   we need to convert the data to a simple features object
+
+    -   `st_as_sf()` from **sf** takes a data frame or tibble with lon/lat and creates a point dataset
+
+```{r FL-points}
+gainesville_sf <- gainesville_patients %>% 
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = 4326) %>% 
+  st_transform(6440) # transform to NAD83(2011) / Florida North
+
+mapview(
+  gainesville_sf,
+  col.regions = "red",
+  legend = FALSE)
+```
+
+-   Next, we acquire the health insurance data
+
+    -   we have spatial & demo data, then we pre-process
+
+        -   we call `select()` to retain three columns - GEOID, ACS estimate, and MOE
+
+        -   we call `st_transform()` to allign the coordinate systems
+
+```{r alachua-data}
+alachua_insurance <- get_acs(
+  geography = "tract",
+  variables = "DP03_0096P",
+  state = "FL",
+  county = "Alachua",
+  year = 2019,
+  geometry = TRUE
+) %>% 
+  select(GEOID, pct_insured = estimate,
+         pct_insured_moe = moe) %>% 
+  st_transform(6440)
+```
+
+-   we have spatial & demo data; now we can pre-process prior to the spatial join
+
+    -   we call `select()` to retain three columns - GEOID, ACS estimate, and MOE
+
+    -   we call `st_transform()` to allign the coordinate systems
+
+```{r interactive-layering}
+mapview(alachua_insurance,
+        zcol = "pct_insured",
+        layer.name = "% with health<br/>insurance"
+        ) +
+  mapview(
+    gainesville_sf,
+    col.regions = "red",
+    legend = FALSE
+  )
+```
+
+-   to perform the join, we now move on to `st_join()`
+
+    -   `st_join()` defaults to the `st_intersects()` predicate
+
+```{r spatial-join}
+patients_joined <- st_join(
+  gainesville_sf,
+  alachua_insurance
+)
+```
+
+-   The resultant dataframe gives us the patients along with the rate (and moe) of uninsured in their respective census tracts
+
+    -   be wary of the *ecological fallacy* - do not infer the individual is represented by group characteristics.
+
+### Spatial joins and group-wise spatial analysis
+
+-   we may also be interested in looking at areas within other areas
+
+    -   i.e. neighborhoods within metropolitan areas
+
+-   This can be achieved using *polygon-on-polygon spatial* joins
+
+#### Spatial join data setup
+
+-   We want to look at distribution of census tracts by Hispanic population for four largest metro areas in Texas
+
+    -   We will use `B01003_001` from the 1-year ACS to get CBSA population data, and the geometry
+
+```{r}
+library(tidycensus)
+library(tidyverse)
+library(sf)
+
+# CRS: NAD83(2011) / Texas Centric Albers Equal Area
+tx_cbsa <- get_acs( # get the data
+  geography = "cbsa",
+  variables = "B01003_001",
+  year = 2019,
+  survey = "acs1",
+  geometry = TRUE
+) %>% filter(str_detect(NAME, "TX")) %>% # get those w/ names containing texas
+  slice_max(estimate, n = 4) %>% # get the highest 4 estimates
+  st_transform(6579) # transform CRS
+```
