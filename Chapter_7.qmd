@@ -44,7 +44,7 @@ editor_options:
 
 -   Author recommends following workflow:
 
-    1.   Download datasets planned for use
+    1.  Download datasets planned for use
 
     2.  identify appropriate CRS for layers (use `crsuggest::suggest_crs()`)
 
@@ -62,7 +62,7 @@ editor_options:
 
 #### Example: Kansas City metropolitan area
 
-1.   use **tigris** to get 2020 census tracts for two states in Kansas City metro area
+1.  use **tigris** to get 2020 census tracts for two states in Kansas City metro area
 
 2.  get boundary of Kansas City metro area
 
