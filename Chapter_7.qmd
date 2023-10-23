@@ -20,6 +20,14 @@ editor_options:
 
 # Chapter 7 Notes: Spatial Analysis with US Census data
 
+```{r setup}
+library(tigris)
+library(tidyverse)
+library(sf)
+library(tidycensus)
+options(tigris_use_cache = TRUE)
+```
+
 -   defines *spatial analysis* as "performance of analytic tasks that explicitly incorporate the spatial properties of a dataset."
 
 -   Positions R as a GIS/GIS Substitute
@@ -323,3 +331,491 @@ median_by_metro
 -   Note: the above `summarize()` operation also dissolves group geographies
 
 ## 7.3 Small area time-series analysis
+
+-   We may occasionally want to perform time-series analysis of geographies smaller than Counties.
+
+    -   These areas are more prone to change in shape over time
+
+        -   The Census redraws census tracts if they grow too large between decennial Censuses, usually by subdividing the existing Census tracts
+
+    -   one method of addressing the change-over-time is *areal interpolation*
+
+        -   data is allocated from one set of zones to a second set of overlapping zones using weighted reallocation
+
+            -   Two common methods for interpolating in the overlapping areas:
+
+                -   *area-weighted interpolation:* define weights by the area of geometry overlaps; implemented through `sf::st_interpolate_aw()`
+
+                    -   assumes uniform distribution of attributes
+
+                -   *population-weighted interpolation:* defines weights from a third dataset that represents population estimates, and estimates the population in geometry overlaps using these weights. implemented through `tidycensus::interpolate_pw()`
+
+                    -   Requires three datasets - the two overlapping datasets, and a third dataset with population estimates to act as weights
+
+                    -   The implemention in **tidycensus** uses a *weighted block point approach:*
+
+                        -   census blocks and their population estimates are converted to points
+
+                        -   these points are aggregated in origin/destination intersections to produce pop weights
+
+```{r wfh-data-access}
+### Pull 2011-2015 5 year estimates
+wfh_15 <- get_acs(
+  geography = "tract",
+  variables = "B08006_017",
+  year = 2015,
+  state = "AZ",
+  county = "Maricopa",
+  geometry = TRUE
+) %>%
+  select(estimate) %>%
+  st_transform(26949) # CRS: NAD 83 / Arizona Central
+
+### Pull 2016-2020 5 year estimates
+wfh_20 <- get_acs(
+  geography = "tract",
+  variables = "B08006_017",
+  year = 2020,
+  state = "AZ",
+  county = "Maricopa",
+  geometry = TRUE
+ ) %>%
+  st_transform(26949) # CRS: NAD 83 / Arizona Central
+```
+
+```{r area-weighted}
+wfh_interpolate_aw <- st_interpolate_aw(
+  wfh_15,
+  wfh_20,
+  extensive = TRUE # weighted sums instead of weighted means
+) %>% 
+  mutate(GEOID = wfh_20$GEOID) # use 2020 census tract IDs
+
+wfh_interpolate_aw
+```
+
+```{r population-weighted}
+## First, assign the blocks - tigris pulls down POP20 and HOUSING20 data
+maricopa_blocks <- blocks(
+  state = "AZ",
+  county = "Maricopa",
+  year = 2020
+)
+
+## Then we do population-weighted interpolation
+wfh_interpolate_pw <- interpolate_pw(
+  wfh_15,
+  wfh_20,
+  to_id = "GEOID",
+  extensive = TRUE, # sum rather than mean
+  weights = maricopa_blocks, # define the blocks for block->point conversion
+  weight_column = "POP20", # define the variable to use as the weight
+  crs = 26949
+)
+```
+
+### Making small-area comparisons
+
+-   we've interpolated 2011-2015 estimates to 2020 census tracts.
+
+-   We may now compare the 2015 5 Year and the 2020 5 Year
+
+    -   we do this using a left join
+
+        -   remember to maintain the left geometry, and provide a suffix
+
+```{r 2015-2020-comparison}
+wfh_shift <- wfh_20 %>%
+  left_join(st_drop_geometry(wfh_interpolate_pw), # drop the geometry
+            by = "GEOID",
+            suffix = c("_2020", "_2015")) %>% # add the suffixes
+  mutate(wfh_shift = estimate_2020 - estimate_2015) # calculate the change
+
+ggplot() +
+  geom_sf(data = wfh_shift, aes(fill = wfh_shift), color = NA,
+          alpha = 0.8) +
+  scale_fill_distiller(palette = "PuOr", direction = -1) +
+  labs(fill = "Shift, 2011-2015 to\n2016-2020 ACS",
+       title = "Change in work-from-home population",
+       subtitle = "Maricopa County, Arizona") +
+  theme_void()
+```
+
+## 7.4 Distance and Proximity Analysis
+
+-   We will calculate the distance between census tracts and Level I and Level II Trauma Hospitals in Iowa
+
+    -   First, we need the census tracts and the hospital locations
+
+```{r iowa-census-hospitals}
+library(tigris)
+library(sf)
+library(tidyverse)
+options(tigris_use_cache = TRUE)
+
+# CRS: NAD83 / Iowa North
+ia_tracts <- tracts("IA", cb = TRUE, year = 2019) %>%
+  st_transform(26975)
+
+hospital_url <- "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Hospital/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson"
+
+trauma <- st_read(hospital_url) %>%
+  filter(str_detect(TRAUMA, "LEVEL I\\b|LEVEL II\\b|RTH|RTC")) %>%
+  st_transform(26975) %>%
+  distinct(ID, .keep_all = TRUE)
+
+names(trauma)
+```
+
+### Calculating distance
+
+-   to calculate Euclidian distance of hospitals, we want to identify hospitals in and around Iowa - this includes hospitals in other states.
+
+    -   first, we'll do a spatial filter with a distance threshold to capture those within Iowa or within a certain distance of Iowa's boundaries
+
+        -   this is done with `st_is_within_distance` predicate set to 100000 meters, or 10Km
+
+```{r hosp-near-iowa}
+ia_trauma <- trauma %>%
+  st_filter(ia_tracts, 
+            .predicate = st_is_within_distance,
+            dist = 100000)
+
+ggplot() + 
+  geom_sf(data = ia_tracts, color = "NA", fill = "grey50") + 
+  geom_sf(data = ia_trauma, color = "red") + 
+  theme_void()
+```
+
+-   now we use `st_distance()` to calculate distances from census tract centroids
+
+    -   this will generate a (dense) distance matrix of distances
+
+```{r distance-matrix}
+dist <- ia_tracts %>%
+  st_centroid() %>%
+  st_distance(ia_trauma) 
+
+dist[1:5, 1:5]
+```
+
+-   to find the shortest distance for each tract to a hospital, we can run the following:
+
+```{r minimum-distances}
+min_dist <- dist %>% # take the distance matrix
+  apply(1, min) %>%  # apply the min() function to each row in the matrix
+  as.vector() %>%    # return the minimum as a vector of distances
+  magrittr::divide_by(1000) # divide each element of the vector by 1000 to return KM
+
+hist(min_dist) # plot
+```
+
+### Calculating Travel Times
+
+-   This portion requires the use of a routing engine, and I will need to see about performing the analysis using an alternative service besides MapBox
+
+### Catchment areas with buffers and isochrones
+
+-   We'll perform a buffer catchment around Iowa Methodist Medical Center in Des Moines
+
+```{r}
+iowa_methodist <- filter(ia_trauma, ID == "0009850308")
+
+buf5km <- st_buffer(iowa_methodist, dist = 5000)
+```
+
+-   the second portion of this exercise requires the development of isochrones - as I am not using the Mapbox API I will need to find another way of performing that aspect. In the meantime, I will demonstrate the buffer catchment below.
+
+```{r}
+library(leaflet)
+library(leafsync)
+
+hospital_icon <- makeAwesomeIcon(
+  icon = "ios-medical",
+  markerColor = "red",
+  library = "ion"
+)
+
+# Convert data to CRS 4326 for Leaflet
+map1 <- leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(data = st_transform(buf5km, 4326)) %>% 
+  addAwesomeMarkers(data = st_transform(iowa_methodist, 4326),
+                    icon = hospital_icon)
+
+map1
+```
+
+### Computing demographic estimates for zones with areal interpolation
+
+-   First, we get the demography data for the data - in this case, poverty and total population
+
+    -   Remember to transform it to the CRS we'll be using
+
+```{r}
+polk_poverty <- get_acs(
+  geography = "block group",
+  variables = c(poverty_denom = "B17010_001",
+                poverty_num = "B17010_002"),
+  state = "IA",
+  county = "Polk",
+  geometry = TRUE,
+  output = "wide",
+  year = 2020
+) %>% 
+  select(poverty_denomE, poverty_numE) %>% 
+  st_transform(26975)
+```
+
+-   Then we get the
+
+```{r}
+library(glue)
+
+polk_blocks <- blocks(
+  state = "IA",
+  county = "Polk",
+  year = 2020
+)
+
+buffer_pov <- interpolate_pw(
+  from = polk_poverty,
+  to = buf5km,
+  extensive = TRUE,
+  weights = polk_blocks,
+  weight_column = "POP20",
+  crs = 26975
+) %>% 
+  mutate(pct_poverty = 100 * (poverty_numE / poverty_denomE))
+```
+
+## 7.5 Better cartography with spatial overlay
+
+-   As noted before, **tidycensus** pulls down Census Geographies using **tigris**, and by default, it pulls down *cartographic boundary files* with coastlines pre-clipped.
+
+-   We may rather decide to pull down core shapefiles and erase water ourselves, say in cases where the Cartographic Boundary File includes water in the scale it is drawn at:
+
+```{r}
+library(tidycensus)
+library(tidyverse)
+options(tigris_use_cache = TRUE)
+
+ny <- get_acs(
+  geography = "tract", 
+  variables = "B19013_001", 
+  state = "NY", 
+  county = "New York", 
+  year = 2020,
+  geometry = TRUE
+)
+
+ggplot(ny) + 
+  geom_sf(aes(fill = estimate)) + 
+  scale_fill_viridis_c(labels = scales::label_dollar()) + 
+  theme_void() + 
+  labs(fill = "Median household\nincome")
+```
+
+### "Erasing" areas from Census polygons
+
+We can perform this operation as such:
+
+1.  acquire the full polygons by setting \`cb = FALSE\` in the `get_acs()` function call
+
+```{r}
+ny2 <- get_acs(
+  geography = "tract",
+  variables = "B19013_001",
+  state = "NY",
+  county = "New York",
+  geometry = TRUE,
+  year = 2020,
+  cb = FALSE
+  ) %>% 
+  st_transform(6538)
+```
+
+2.  Then, we perform an `erase_water()` operation to remove the water areas
+    -   `tigris::erase_water()` auto-detects US Counties that contain the dataset
+    -   it then pulls down a shapefile of the water boundaries
+    -   it then erases the water areas from the dataset
+
+```{r}
+tictoc::tic()
+ny_erase <- erase_water(ny2)
+tictoc::toc()
+```
+
+## 7.6 Spatial neighborhoods and spatial weights matrices
+
+-   The following chunk brings in the dataset we will be demonstrating with, which is the estimated median age in the Dallas-Fortworth area at the census tract level for the 2020 5-year vintage.
+
+```{r tex-census}
+library(tidycensus)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(spdep)
+options(tigris_use_cache = TRUE)
+
+# CRS: NAD83 / Texas North Central
+dfw <- core_based_statistical_areas(cb = TRUE, year = 2020) %>% 
+  filter(str_detect(NAME, "Dallas")) %>% 
+  st_transform(32138)
+
+dfw_tracts <- get_acs(
+  geography = "tract",
+  variables = "B01002_001",
+  state = "TX",
+  year = 2020,
+  geometry = TRUE
+  ) %>% 
+  st_transform(32138) %>% 
+  st_filter(dfw, .predicate = st_within) %>% 
+  na.omit()
+
+ggplot(dfw_tracts) +
+  geom_sf(aes(fill = estimate), color = NA) +
+  scale_fill_viridis_c() +
+  theme_void()
+```
+
+### Understanding spatial neighborhoods
+
+-   in EDSA, the *neighborhood* is a representation of how a geographic feature is in relation with nearby features
+
+-   Key r package for EDSA is **spdep**, which defines the following neighborhood definitions:
+
+    -   *Proximity-based neighbors*: neighborhood is defined by distance threshold, or by a count of k number of closest features ( *k-nearest neighbor)*
+
+    -   *Graph-based neighbors:* network-based definition
+
+    -   *Contiguity-based neighbors:* shared edges and vertices of polygons define neighbors (i.e. queens-case neighbors and rooks-case neighbors)
+
+        -   The learning example will use queen's case contiguity-based neighborhood
+
+1.  We'll define the neighbors using `spdep::poly2nb()`
+
+```{r dallas-neighbors}
+neighbors <- poly2nb(dfw_tracts, queen = TRUE) # construct a neighborhood list
+summary(neighbors)
+```
+
+-   Looking at the summary, we can see descriptive stats for neighborhood relations
+
+    -   be wary of edge effects, as we have artificially removed neighbors by our definition of the area of study.
+
+2.  Now we can visualize neighborhood relationships
+
+```{r plot-relationships}
+dfw_coords <- dfw_tracts %>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+plot(dfw_tracts$geometry)
+plot(neighbors,
+     coords = dfw_coords,
+     add = TRUE,
+     col = "blue",
+     points = FALSE)
+```
+
+3.  We can identify the row indices of specific neighbors to a given census tract by calling the census tract's row.
+
+```{r neighbor-check}
+neighbors[[1]]
+```
+
+### Generating the spatial weights matrix
+
+We'll develop spatial weights from the neighbors list.
+
+-   we use `spdep::nb2listw()` to generate weights.
+
+    -   by default, we use `style = "W"` - row-standardized weights, where each object's neighbors sum weights to 1.
+
+    -   the alternate option, `style = "B"` gives binary weights - 0 for non-neighbors, and 1 for neighbors.
+
+```{r weights}
+weights <- nb2listw(neighbors, style = "W")
+
+weights$weights[[1]]
+```
+
+## 7.7 Global and local spatial autocorrelation
+
+-   given a row-standardized spatial weights object, we may now perform exploratory spatial data analysis of median age in the DFW metro.
+
+    -    ***spatial autocorrelation*** is the relationship between a feature's attributes, and the attributes of its neighbors
+
+        -   "we might be interested in the degree to which ACS estimates are *similar to* **or** *differ from* those of their neighbors ***as defined by a weights matrix***
+
+-   The common patterns of spatial autocorrelation are:
+
+    -   **Spatial clustering:** *data values trend toward similarity among neighbors*
+
+    -   **Spatial uniformity**: *data values trend toward difference among neighbors*
+
+    -   **Spatial randomness:** *data values between neighbors have no **apparent** relationships*
+
+### Spatial lags and Moran's *I*
+
+-   We use spatial weights matrices to estimate *spatial lag* - the effect of neighboring values on the values of an observation.
+
+    -   row-standardized weights matrices can be used for lagged means; binary weights can produce lagged sums
+
+-   We will use `spdep::lag.listw()`
+
+    -   this function requires our vector and our weights list object
+
+```{r}
+dfw_tracts$lag_estimate <- lag.listw(weights, dfw_tracts$estimate)
+```
+
+-   We now can use the new `lag_estimate` column and our original variable, `estimate`, to create a scatterplot
+
+```{r}
+ggplot(dfw_tracts, aes(x = estimate, y = lag_estimate)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(color = "red") +
+  theme_minimal() +
+  labs(title = "Median age by Census tract, Dallas-Fort Worth TX",
+       x = "Median age",
+       y = "Spatial lag, median age",
+       caption = "Data source: 2016-2020 ACS via the tidycensus R package.\nSpatial relationships based on queens-case polygon contiguity.")
+```
+
+-   as the spatially lagged median age increases, so does the median age, as a general trend.
+
+    -   We can check the significance of this relationship with a Moran's *I* test
+
+```{r}
+moran.test(dfw_tracts$estimate, weights)
+```
+
+-   A positive Moran's *I* implies a spatial clustering; the p-value being less than an 0.05 threshold means we reject the null hypothesis of spatial randomness.
+
+-   As such, we may interpret this as a non-negligible trend wherein younger populations tend to be nearer other young populations, and older populations tend to be near older populations.
+
+### Local spatial autocorrelation
+
+-   Local spatial autocorrelation analysis can identify hot-spots and cold-spots by disaggregating global results.
+
+    -   one common measure is Getis-Ord local G statistic
+
+        -   the default G*i* statistic computes a ration of weighted average of neighborhood values to total sum of values
+
+        -   G*i*\* includes the initial location, *i* , in the computation
+
+```{r}
+# to compute Gi* we need to use include.self()
+localg_weights <- nb2listw(include.self(neighbors))
+
+dfw_tracts$localG <- localG(dfw_tracts$estimate, localg_weights)
+
+ggplot(dfw_tracts) + 
+  geom_sf(aes(fill = as.double(localG)), color = NA) + 
+  scale_fill_distiller(palette = "RdYlBu") + 
+  theme_void() + 
+  labs(fill = "Local Gi* statistic")
+```
