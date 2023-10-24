@@ -746,9 +746,9 @@ weights$weights[[1]]
 
 -   given a row-standardized spatial weights object, we may now perform exploratory spatial data analysis of median age in the DFW metro.
 
-    -    ***spatial autocorrelation*** is the relationship between a feature's attributes, and the attributes of its neighbors
+    -   ***spatial autocorrelation*** is the relationship between a feature's attributes, and the attributes of its neighbors
 
-        -   "we might be interested in the degree to which ACS estimates are *similar to* **or** *differ from* those of their neighbors ***as defined by a weights matrix***
+    -   "we might be interested in the degree to which ACS estimates are *similar to* **or** *differ from* those of their neighbors ***as defined by a weights matrix***"
 
 -   The common patterns of spatial autocorrelation are:
 
@@ -774,7 +774,7 @@ dfw_tracts$lag_estimate <- lag.listw(weights, dfw_tracts$estimate)
 
 -   We now can use the new `lag_estimate` column and our original variable, `estimate`, to create a scatterplot
 
-```{r}
+```{r lag-estimate}
 ggplot(dfw_tracts, aes(x = estimate, y = lag_estimate)) +
   geom_point(alpha = 0.3) +
   geom_abline(color = "red") +
@@ -789,7 +789,7 @@ ggplot(dfw_tracts, aes(x = estimate, y = lag_estimate)) +
 
     -   We can check the significance of this relationship with a Moran's *I* test
 
-```{r}
+```{r morans-i}
 moran.test(dfw_tracts$estimate, weights)
 ```
 
@@ -807,7 +807,7 @@ moran.test(dfw_tracts$estimate, weights)
 
         -   G*i*\* includes the initial location, *i* , in the computation
 
-```{r}
+```{r getis-ord}
 # to compute Gi* we need to use include.self()
 localg_weights <- nb2listw(include.self(neighbors))
 
@@ -819,3 +819,147 @@ ggplot(dfw_tracts) +
   theme_void() + 
   labs(fill = "Local Gi* statistic")
 ```
+
+-   Returned values are in z-scores
+
+    -   by choosing z-score thresholds, an analyst may determine hot spots and cold spots
+
+```{r hot-spot}
+dfw_tracts <- dfw_tracts %>% 
+  mutate(hotspot = case_when(
+    localG >= 2.576 ~ "High cluster",
+    localG <= -2.576 ~ "Low cluster",
+    TRUE ~ "Not significant"
+  ))
+
+ggplot(dfw_tracts) +
+  geom_sf(aes(fill = hotspot), color = "grey90", size = 0.1) +
+  scale_fill_manual(values = c("red", "blue", "grey")) +
+  theme_void()
+```
+
+-   This gives a map wherein red tracts exhibit clustering of high median ages/older populations, whereas blue exhibit clustering of lower median ages/younger populations, defined by the positive and negative z-scores, respectively.
+
+### Identifying clusters and spatial outliers with local indicators of spatial association (LISA)
+
+-   LISA are looking for "local indicators of spatial association", rather than the global statistics such as Moran's I.
+
+    -   one popular LISA statistic is the local I*i* statistic
+
+    -   **spdep** computes the local moran LISA statistic using the `localmoran()` functions
+
+        -   a key approach is conditional permutation using `localmoran_perm()`
+
+    -   LISA approaches allow us to identify not just clusters (High-High, Low-Low), but also spatial outliers
+
+        -   these are areas where significantly high values are surrounded by significantly low values (High-Low), and vice versa (Low-High)
+
+```{r med-age-lisa}
+set.seed(1983) # make the permutations reproducible
+
+dfw_tracts$scaled_estimate <- as.numeric(scale(dfw_tracts$estimate)) # z-score norm
+
+dfw_lisa <- localmoran_perm( # local moran's Ii computed for scaled median age
+  dfw_tracts$scaled_estimate,
+  weights, # we use contiguity-based spatial weights matrix
+  nsim = 999L, # we use 999 conditional permutation simulations
+  alternative = "two.sided" # we identify statistically significant clutsers and outliers
+ ) %>% 
+  as_tibble() %>% 
+  set_names(c("local_i", "exp_i", "var_i", "z_i", "p_i",
+              "p_i_sim", "pi_sim_folded", "skewness", "kurtosis"
+  ))
+
+dfw_lisa_df <- dfw_tracts %>% # attach the computed values to our census tracts 
+  select(GEOID, scaled_estimate) %>% 
+  mutate(lagged_estimate = lag.listw(weights, scaled_estimate)) %>% 
+  bind_cols(dfw_lisa)
+```
+
+-   with this data generated, we can develop a quadrant plot and a cluster/outlier map
+
+```{r quadrant}
+
+dfw_lisa_cluster <- dfw_lisa_df %>% 
+  mutate(lisa_cluster = case_when(
+    p_i >= 0.05 ~ "Not significant",
+    scaled_estimate > 0 & local_i > 0 ~ "High-high",
+    scaled_estimate > 0 & local_i < 0 ~ "High-low",
+    scaled_estimate < 0 & local_i > 0 ~ "Low-low",
+    scaled_estimate < 0 & local_i < 0 ~ "Low-high"
+  ))
+
+# set up the plot colors
+color_values <- c(`High-high` = "red",
+                  `High-low` = "pink",
+                  `Low-low` = "blue",
+                  `Low-high` = "lightblue",
+                  `Not significant` = "white")
+
+# make quadrant plot
+ggplot(dfw_lisa_cluster, aes(x = scaled_estimate,
+                             y = lagged_estimate,
+                             fill = lisa_cluster)) +
+  geom_point(color = "black", shape = 21, size = 2) +
+  theme_minimal() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = color_values) +
+  labs(x = "Median age (z-score)",
+       y = "Spatial lag of median age (z-score)",
+       fill = "Cluster type")
+```
+
+-   Top-right and Bottom-left quadrants represent clusters
+
+-   Top-left and Bottom-right represent spatial outliers
+
+We now produce the cluster/outlier map
+
+```{r cluster-outlier-map}
+ggplot(dfw_lisa_cluster, aes(fill = lisa_cluster)) +
+  geom_sf(size = 0.1) +
+  theme_void() +
+  scale_fill_manual(values = color_values) +
+  labs(fill = "Cluster type")
+```
+
+## 7.8 Exercises
+
+1.  Identify a different core-based statistical area of interest and use the methods introduced in this chapter to extract Census tracts of block groups for that CBSA.
+
+    ```{r}
+    library(tigris)
+    library(tidyverse)
+    library(sf)
+    options(tigris_use_cache = TRUE)
+
+    ca_tracts <- tracts(state = "California", cb = TRUE, year = 2020) %>% 
+      st_transform(6425)
+
+    greater_la <- combined_statistical_areas(cb = TRUE, year = 2020) %>% 
+      filter(str_detect(NAME, "Los Angeles")) %>% 
+      st_transform(6425)
+
+    gla_tracts <- ca_tracts[greater_la, op = st_within]
+
+    ggplot() + 
+      geom_sf(data = gla_tracts, fill = "white", color = "grey") +
+      geom_sf(data = greater_la, fill = NA, color = "red")
+    ```
+
+2.  Replicate the `erase_water()` cartographic workflow for a different county with significant water area. Be sure to transform your data to an appropriate projected coordinate system first.
+
+```{r}
+nola <- get_acs(
+  geography = "tract",
+  variables = "B19013_001",
+  state = "LA",county = "Orleans", 
+  geometry = TRUE,
+  year = 2020, cb = FALSE) %>% 
+  st_transform(6478)
+
+nola_water <- erase_water(nola)
+```
+
+3.  Acquire a spatial dataset with tidycensus for a region of interest and variable of interest to you. Follow the instructions in this chapter to generate a spatial weights matrix, then compute a hot-spot analysis with `localG()`.
