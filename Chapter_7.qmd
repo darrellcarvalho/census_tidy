@@ -926,29 +926,33 @@ ggplot(dfw_lisa_cluster, aes(fill = lisa_cluster)) +
 
 ## 7.8 Exercises
 
-1.  Identify a different core-based statistical area of interest and use the methods introduced in this chapter to extract Census tracts of block groups for that CBSA.
+### Exercise 1
 
-    ```{r}
-    library(tigris)
-    library(tidyverse)
-    library(sf)
-    options(tigris_use_cache = TRUE)
+Identify a different core-based statistical area of interest and use the methods introduced in this chapter to extract Census tracts of block groups for that CBSA.
 
-    ca_tracts <- tracts(state = "California", cb = TRUE, year = 2020) %>% 
-      st_transform(6425)
+```{{r}}
+library(tigris)
+library(tidyverse)
+library(sf)
+options(tigris_use_cache = TRUE)
 
-    greater_la <- combined_statistical_areas(cb = TRUE, year = 2020) %>% 
-      filter(str_detect(NAME, "Los Angeles")) %>% 
-      st_transform(6425)
+ca_tracts <- tracts(state = "California", cb = TRUE, year = 2020) %>% 
+  st_transform(6425)
 
-    gla_tracts <- ca_tracts[greater_la, op = st_within]
+greater_la <- combined_statistical_areas(cb = TRUE, year = 2020) %>% 
+  filter(str_detect(NAME, "Los Angeles")) %>% 
+  st_transform(6425)
 
-    ggplot() + 
-      geom_sf(data = gla_tracts, fill = "white", color = "grey") +
-      geom_sf(data = greater_la, fill = NA, color = "red")
-    ```
+gla_tracts <- ca_tracts[greater_la, op = st_within]
 
-2.  Replicate the `erase_water()` cartographic workflow for a different county with significant water area. Be sure to transform your data to an appropriate projected coordinate system first.
+ggplot() + 
+  geom_sf(data = gla_tracts, fill = "white", color = "grey") +
+  geom_sf(data = greater_la, fill = NA, color = "red")
+```
+
+### Exercise 2
+
+Replicate the `erase_water()` cartographic workflow for a different county with significant water area. Be sure to transform your data to an appropriate projected coordinate system first.
 
 ```{r}
 nola <- get_acs(
@@ -960,6 +964,176 @@ nola <- get_acs(
   st_transform(6478)
 
 nola_water <- erase_water(nola)
+
+ggplot() +
+  geom_sf(data = nola_water)
 ```
 
-3.  Acquire a spatial dataset with tidycensus for a region of interest and variable of interest to you. Follow the instructions in this chapter to generate a spatial weights matrix, then compute a hot-spot analysis with `localG()`.
+### Exercise 3
+
+Acquire a spatial dataset with tidycensus for a region of interest and variable of interest to you. Follow the instructions in this chapter to generate a spatial weights matrix, then compute a hot-spot analysis with `localG()`.
+
+```{r}
+filipino <- "3854"
+
+totpop <- "T01001_001N"
+
+ca_pinoy <- get_decennial(
+  "tract",
+  variables = totpop,
+  year = 2020,
+  sumfile = "ddhca",
+  state = "CA",
+  geometry = TRUE,
+  pop_group = filipino,
+  pop_group_label = TRUE
+)
+
+ca_tot <- get_decennial(
+  "tract",
+  variables = "P1_001N",
+  sumfile = "dhc",
+  year = 2020,
+  state = "CA",
+  geometry = TRUE
+)
+
+ca_fil_tot <- st_join(ca_tot, ca_pinoy, join = st_equals_exact, par = 0)
+
+ca_fil_tot$per_pin <- ca_fil_tot$value.y / ca_fil_tot$value.x * 100
+
+ggplot() +
+  geom_sf(data = ca_fil_tot, color = NA, aes(fill = per_pin)) +
+  scale_fill_viridis_c() +
+  theme_void()
+```
+
+```{r}
+ca_fil_tot <- ca_fil_tot %>%
+  st_transform(3310) %>%
+  select(GEOID.x,NAME.x, value.x,value.y,per_pin) %>% 
+  replace_na(list(value.y = 0, per_pin = 0)) %>% 
+  filter(!st_is_empty(geometry))
+  
+
+neighbors <- poly2nb(ca_fil_tot, queen = TRUE)
+
+ca_fil_coords <- ca_fil_tot %>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+plot(ca_fil_tot$geometry)
+plot(neighbors,
+     coords = ca_fil_coords,
+     add = TRUE,
+     col = "blue",
+     points = FALSE)
+```
+
+```{r}
+weights <- nb2listw(neighbors, style = "W", zero.policy = TRUE)
+
+ca_fil_tot$lag_estimate <- lag.listw(weights,ca_fil_tot$per_pin)
+
+ggplot(ca_fil_tot, aes(x = per_pin, y = lag_estimate)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(color = "red") +
+  theme_minimal() +
+  labs(title = "Percent of Population that is Filipino by Census tract, California",
+       x = "Percent Filipino",
+       y = "Spatial lag, Percent Filipino",
+       caption = "Data source: 2020 DHC-A via tidycensus R Package.\nSpatial relationships based on queens-case polygon contiguity.")
+```
+
+```{r}
+moran.test(ca_fil_tot$per_pin, weights, zero.policy = TRUE)
+```
+
+```{r}
+localg_weights <- nb2listw(include.self(neighbors))
+ca_fil_tot$localG <- localG(ca_fil_tot$per_pin, localg_weights)
+
+ggplot(ca_fil_tot) +
+  geom_sf(aes(fill = as.numeric(localG)), color = NA) +
+  scale_fill_distiller(palette = "RdYlBu") +
+  theme_void() +
+  labs(fill = "Local Gi* statistic")
+```
+
+```{r}
+ca_fil_tot <- ca_fil_tot %>%
+  mutate(hotspot = case_when(
+    localG >= 2.576 ~ "High cluster",
+    localG <= -2.576 ~ "Low cluster",
+    TRUE ~ "Not significant"
+  ))
+
+ggplot(ca_fil_tot) + 
+  geom_sf(aes(fill = hotspot), color = NA) + 
+  scale_fill_manual(values = c("red", "blue", "grey")) + 
+  theme_void()
+```
+
+```{r}
+set.seed(1983)
+
+ca_fil_tot$scaled_estimate <- as.numeric(scale(ca_fil_tot$per_pin))
+
+ca_lisa <- localmoran_perm( zero.policy = TRUE,
+  ca_fil_tot$scaled_estimate,
+  weights,
+  nsim = 999L,
+  alternative = "two.sided"
+) %>% 
+  as_tibble() %>% 
+  set_names(c("local_i", "exp_i", "var_i", "z_i", "p_i", "p_i_sim", "pi_sim_folded","skewness", "kurtosis"))
+
+ca_lisa_df <- ca_fil_tot %>% 
+  select(GEOID.x, scaled_estimate) %>% 
+  mutate(lagged_estimate = lag.listw(weights, scaled_estimate)) %>% 
+  bind_cols(ca_lisa)
+```
+
+```{r}
+ca_lisa_clusters <- ca_lisa_df %>% 
+  mutate(lisa_cluster = case_when(
+    p_i >= 0.05 ~ "Not significant",
+    scaled_estimate > 0 & local_i > 0 ~ "High-high",
+    scaled_estimate > 0 & local_i < 0 ~ "High-low",
+    scaled_estimate < 0 & local_i > 0 ~ "Low-low",
+    scaled_estimate < 0 & local_i < 0 ~ "Low-high"
+  ))
+```
+
+```{r}
+color_values <- c(`High-high` = "red",
+                  `High-low` = "pink",
+                  `Low-low` = "blue",
+                  `Low-high` = "lightblue",
+                  `Not significant` = "grey")
+
+ggplot(ca_lisa_clusters, 
+       aes( x = scaled_estimate,
+            y = lagged_estimate,
+            fill = lisa_cluster)) +
+  geom_point(color = "black", shape = 21, size = 2) +
+  theme_minimal() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = color_values) +
+  labs(x = "Percent Filipino (z-score)",
+       y = "Spatial lag of Percent Filipino (z-score)",
+       fill = "Cluster type")
+```
+
+```{r}
+
+ca_clusters_sin_agua <- ca_lisa_clusters %>% erase_water()
+
+ggplot(ca_clusters_sin_agua, aes(fill = lisa_cluster)) +
+  geom_sf(color = NA) +
+  theme_void() +
+  scale_fill_manual(values = color_values) +
+  labs(fill = "Cluster type")
+
+```
