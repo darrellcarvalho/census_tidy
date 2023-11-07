@@ -50,6 +50,7 @@ library(car)
 library(spdep)
 library(spatialreg)
 library(plotly)
+library(GWmodel)
 ```
 
 -   We will look at tract-level segregation for non-Hispanic white, non-Hispanic black, non-Hispanic Asian, and Hispanic populations in California urban areas.
@@ -563,8 +564,8 @@ pca_tibble <- pca$rotation %>% as_tibble(rownames = "predictor")
 
 ```{r}
 pca_tibble %>% 
-  select(predictor:PC6) %>% 
-  pivot_longer(PC1:PC6, names_to = "component", values_to = "value") %>% 
+  select(predictor:PC5) %>% 
+  pivot_longer(PC1:PC5, names_to = "component", values_to = "value") %>% 
   ggplot(aes(x = value, y = predictor)) +
   geom_col(fill = "darkgreen", color = "darkgreen", alpha = 0.5) +
   facet_wrap(~component, nrow = 1) +
@@ -587,7 +588,7 @@ dfw_pca <- dfw_data_for_model %>%
   select(GEOID, median_value) %>% 
   cbind(components)
 
-ggplot(dfw_pca, aes(fill = PC5)) +
+ggplot(dfw_pca, aes(fill = PC1)) +
   geom_sf(color = NA) +
   theme_void() +
   scale_fill_viridis_c()
@@ -936,12 +937,20 @@ table(dfw_kmeans$cluster)
 dfw_clusters <- dfw_pca %>% 
   mutate(cluster = as.character(dfw_kmeans$cluster))
 
-ggplot(dfw_clusters, aes(fill = cluster)) +
+
+
+cluster_map <- ggplot(dfw_clusters, aes(fill = cluster)) +
   geom_sf(size = 0.1) +
   scale_fill_brewer(palette = "Set1") +
   theme_void() +
   labs(fill = "Cluster")
+
+ggplotly(cluster_map) %>% 
+  layout(legend = list(orientation = "h", y = -0.15,
+                       x = 0.2, title = "Cluster"))
 ```
+
+\
 
 -   Cluster 1 clearly represents the more rural areas
 
@@ -952,13 +961,97 @@ ggplot(dfw_clusters, aes(fill = cluster)) +
 -   We can also look at a scatter plot of the principle components to identify the clusters
 
 ```{r}
+
+# dfw_clusters$PC2 <- dfw_clusters$PC2 * -1 # flip PC2 to reproduce book graphic
+
 cluster_plot <- ggplot(dfw_clusters,
                        aes(x = PC1, y = PC2, color = cluster)) +
   geom_point() +
   scale_color_brewer(palette = "Set1") +
   theme_minimal()
 
+
+
 ggplotly(cluster_plot) %>% 
   layout(legend = list(orientation = "h", y = -0.15,
                        x = 0.2, title = "Cluster"))
 ```
+
+-   We remember that PC2 tends to cover a spectrum from "rural"/low density and low educational attainment at the upper bound, with "rurality" declining as the value declines.
+
+-   We remember that PC1 increases as diversity increases
+
+-   As such, we can view Cluster 1 as areas of high rurality and (relatively) low diversity;
+
+    -   Cluster 2 has lower rurality and higher diversity
+
+    -   Cluster 4 has the highest density and diversity combination, likely relating to diverse downtown or urbanized neighborhoods
+
+### Spatial clustering & regionalization
+
+-   While the above approach clearly demonstrates geographic patterns, it is *aspatial* in that it does not explicitly account for the underlying geography
+
+    -   We can generate clusters that integrate spatial constraints and patterns explicitly, a process of *regionalization*
+
+-   Several algorithms exist to introduce spatial constraints into clustering
+
+    -   such constraints include a requirement to minimize geographic distance between observations
+
+    -   it may also include a requirement of geographic contiguity between observations in a given cluster
+
+-   We will be using the Spatial 'K'luster Analysis by Tree Edge Removal' (SKATER) algorithm
+
+    -   We will use `spdep::skater()` to use this algorithm
+
+        -   This algorithm uses *minimum spanning trees* - a connectivity graph drawn between observations, weighing attribute similarity
+
+            -   the graph is "pruned" by removing edges making unsimilar connections
+
+        -   SKATER also uses *costs* - differences between neighbors based on input variables, and *binary weights* in its weights matrix
+
+```{r}
+library(spdep)
+
+input_vars <- dfw_pca %>% 
+  select(PC1:PC8) %>% 
+  st_drop_geometry() %>% 
+  as.data.frame()
+
+skater_nbrs <- poly2nb(dfw_pca, queen = TRUE)
+costs <- nbcosts(skater_nbrs, input_vars)
+skater_weights <- nb2listw(skater_nbrs, costs, style = "B")
+```
+
+-   After weight generation, we create the minimum spanning tree
+
+```{r}
+mst <- mstree(skater_weights)
+
+regions <- skater(
+  mst[,1:2], # the nodes extracted from the mstree matrix
+  input_vars, # our principal components
+  ncuts = 7, # how many times to prune
+  crit = 10 # minimum observations per group
+  )
+```
+
+-   we can now plot the "solution" to get spatial clusters generated
+
+```{r}
+dfw_clusters$region <- as.character(regions$group)
+
+ggplot(dfw_clusters, aes(fill = region)) +
+  geom_sf(size = 0.1) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void()
+```
+
+-   We see a new set of patterns:
+
+    -   a South-East region demarcated by Cluster 2
+
+    -   a Western region demarcated by Cluster 5
+
+    -   the more classically urban form of downtown and uptown Dallas in Cluster 6
+
+    -   The suburbs of Northeast Tarrant County/the mid-cities is visualized by Cluster 4
