@@ -427,10 +427,9 @@ $$
 
 -   in R, we write models in the syntax of `outcome ~ predictor_1 + predictor_2 + … + predictor_k` for all `k` predictor variables.
 
-```         
 -   we can store the formula in a string to be called by the `lm()` function to fit the linear model
+
 -   we can check the model results using `summary()`
-```
 
 ```{r}
 formula <- "log(median_value) ~ median_rooms + pct_college + median_income + pct_foreign_born + pct_white + median_age + median_structure_age + percent_ooh + pop_density + total_population"
@@ -683,7 +682,8 @@ ggplot(dfw_data_for_model, aes(x = residuals, y = lagged_residuals)) +
 lag_model <- lagsarlm(
   formula = formula2,
   data = dfw_data_for_model,
-  listw = weights)
+  listw = weights,
+  Nagelkerke = TRUE)
 
 lag_model %>% summary() %>% print(signif.stars = TRUE)
 ```
@@ -730,7 +730,7 @@ error_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
 
         -   if so, you may prefer a spatial error model
 
--   We can also see if the models resolve spatial depence by computing Moran's I over the residuals
+-   We can also see if the models resolve spatial dependence by computing Moran's I over the residuals
 
 ```{r}
 moran.test(lag_model$residuals, weights)
@@ -1055,3 +1055,411 @@ ggplot(dfw_clusters, aes(fill = region)) +
     -   the more classically urban form of downtown and uptown Dallas in Cluster 6
 
     -   The suburbs of Northeast Tarrant County/the mid-cities is visualized by Cluster 4
+
+## 8.6 Exercises
+
+### Exercise 1
+
+Acquire race/ethnicity data from **tidycensus** for your chosen region and compute the dissimilarity index. How does segregation in your chosen region compare with urban areas in California?
+
+#### Segregation indices and mapping local segregation
+
+```{r setup-for-longbeach-area}
+lb_lkwd_sghl <- places("California", 2020) %>% 
+  filter_place(c("Long Beach", "Signal Hill", "Lakewood"))
+
+ca_acs_data <- get_acs(
+  geography = "tract",
+  variables = c(
+    white = "B03002_003",
+    black = "B03002_004",
+    asian = "B03002_006",
+    hispanic = "B03002_012"
+  ),
+  state = "CA",
+  geometry = TRUE,
+  year = 2020
+  )
+
+lbarea_data <- ca_acs_data %>% 
+  st_join(lb_lkwd_sghl, left = FALSE) %>% 
+  select(GEOID.x,variable:moe, NAME.y) %>% 
+  st_drop_geometry()
+```
+
+```{r dissimilarity-wholearea}
+# whole area
+lbarea_data %>% 
+  filter(variable %in% c("white", "hispanic")) %>% 
+  dissimilarity(group = "variable", 
+                unit = "GEOID.x", 
+                weight = "estimate")
+```
+
+```{r dissimilarity-comparative}
+# group-wise
+lbarea_data %>% 
+  filter(variable %in% c("white", "hispanic")) %>% 
+  group_by(NAME.y) %>% 
+  group_modify(~
+                 dissimilarity(.x,
+                               group = "variable",
+                               unit = "GEOID.x",
+                               weight = "estimate"
+                               )
+               ) %>% 
+  arrange(desc(est))
+```
+
+```{r multi-group-comparison}
+mutual_within(
+  data = lbarea_data, # take our urban data
+  group = "variable", # compute by our demographic groups
+  unit = "GEOID.x", # compute using our census tracts
+  weight = "estimate", # weigh by the estimated values
+  within = "NAME.y", # compute the values for each urban area
+  wide = TRUE # return as a wide table rather than tidy
+)
+```
+
+```{r local-segregation-score}
+lbarea_local_seg <- lbarea_data %>% 
+  mutual_local(
+    group = "variable",
+    unit = "GEOID.x",
+    weight = "estimate",
+    wide = TRUE
+  )
+
+lbarea_local_seg
+```
+
+```{r}
+lbarea_tracts_seg <- tracts("CA", cb = TRUE, year = 2020) %>% 
+  inner_join(lbarea_local_seg, by = c("GEOID" = "GEOID.x")) %>% erase_water()
+
+lbarea_tracts_seg %>% 
+  ggplot(aes(fill = ls)) +
+  geom_sf(color = NA) +
+  #coord_sf(crs = 26946) +
+  scale_fill_viridis_c(option = "inferno") +
+  theme_void() +
+  labs(fill = "Local\nsegregation index")
+```
+
+#### Computing a local Diversity Gradient
+
+```{r}
+lb_entropy <- lbarea_data %>% 
+  group_by(GEOID.x) %>% 
+  group_modify(~data.frame(entropy = entropy(
+    data = .x,
+    group = "variable",
+    weight = "estimate",
+    base = 4 # We set the base value to the number of groups used in the measure
+  )))
+```
+
+```{r}
+lb_entropy_geo <- tracts("CA", cb = TRUE, year = 2020) %>% 
+  inner_join(lb_entropy, by = c("GEOID" = "GEOID.x")) %>% st_transform(4269)
+
+lb_city_hall <- st_point(c(-118.19755441534062, 33.768608489909795)) %>% st_sfc(crs = "EPSG:4326") %>% st_transform(4269)
+
+centroids <- st_centroid(lb_entropy_geo)
+mtx_distance <- st_distance(lb_city_hall, centroids)
+
+lb_entropy_geo$distance <- as.numeric(mtx_distance) / 1000
+
+ggplot(lb_entropy_geo, aes(x = distance, y = entropy)) +
+  geom_point(alpha = 0.5, na.rm = TRUE) +
+  geom_smooth(method = "loess", na.rm = TRUE) +
+  theme_minimal() +
+  scale_x_continuous("Distance (km) from Long Beach City Hall\nCensus tracts") +
+  ylab("Entropy Index")
+```
+
+### Exercise 2
+
+Reproduce the regression modeling workflow outlined in this chapter for your chosen region. Is residual spatial autocorrelation more, or less, of an issue for your region than in Dallas-Fort Worth?
+
+#### Data Collection
+
+```{r}
+gla_counties <- c("Ventura", "San Bernardino", "Riverside",
+                  "Los Angeles", "Orange")
+
+variables_to_get <- c(
+  median_value = "B25077_001",
+  median_rooms = "B25018_001",
+  median_income = "DP03_0062",
+  total_population = "B01003_001",
+  median_age = "B01002_001",
+  pct_college = "DP02_0068P",
+  pct_foreign_born = "DP02_0094P",
+  pct_white = "DP05_0077P",
+  median_year_built = "B25037_001",
+  percent_ooh = "DP04_0046P"
+  )
+
+gla_data <- get_acs(
+  geography = "tract",
+  variables = variables_to_get,
+  state = "CA",
+  county = gla_counties,
+  geometry = TRUE,
+  output = "wide",
+  year = 2020
+  ) %>% 
+  select(-NAME) %>% 
+  st_transform(2229)
+```
+
+#### Checking the median home values
+
+```{r}
+gla_map <- ggplot(gla_data, aes(fill = median_valueE)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(labels = scales::label_dollar()) +
+  theme_void() +
+  labs(fill = "median home value")
+
+gla_histogram <- ggplot(gla_data, aes(x = median_valueE)) +
+  geom_histogram(alpha = 0.5, fill = "navy", color = "navy",
+                 bins = 100) +
+  theme_minimal() +
+  scale_x_continuous(
+    labels = scales::label_number(
+      scale_cut = cut_short_scale())
+    ) +
+  labs(x = "Median home value ($)")
+
+gla_map + gla_histogram
+```
+
+#### Does LOG make them (more) normally distributed?
+
+-   check default distribution
+
+-   check distribution under log transform
+
+-   check distribution under square root transform
+
+```{r}
+x <- gla_data$median_valueE
+hist(x)
+hist(log(x))
+hist(sqrt(x))
+```
+
+-   We'll stick with square root transform since it seems to most approximate a normal distribution with our data
+
+-   We map to verify
+
+```{r}
+gla_map_sqrt <- ggplot(gla_data, aes(fill = sqrt(median_valueE))) + 
+  geom_sf(color = NA) + 
+  scale_fill_viridis_c() + 
+  theme_void() + 
+  labs(fill = "Median home\nvalue sqrt")
+
+gla_histogram_sqrt <- ggplot(gla_data, aes(x = sqrt(median_valueE))) + 
+  geom_histogram(alpha = 0.5, fill = "navy", color = "navy",
+                 bins = 100) + 
+  theme_minimal() + 
+  scale_x_continuous() + 
+  labs(x = "Median home value sqrt")
+
+gla_map_sqrt + gla_histogram_sqrt
+```
+
+-   Now we start model fitting
+
+```{r}
+gla_data_for_model <- gla_data %>% 
+  mutate(
+    pop_density = 
+      as.numeric(set_units(total_populationE / st_area(.),"1/km2")),
+    median_structure_age = 2018 - median_year_builtE) %>% 
+  select(!ends_with("M")) %>% 
+  rename_with(.fn = ~str_remove(.x, "E$")) %>% 
+  na.omit()
+```
+
+-   Our first multiple regression model
+
+```{r}
+formula <- "sqrt(median_value) ~ median_rooms + pct_college + median_income + pct_foreign_born + pct_white + median_age + median_structure_age + percent_ooh + pop_density + total_population"
+
+model1 <- lm(formula = formula, data = gla_data_for_model)
+summary(model1)
+```
+
+-   Check for covariance across the variables
+
+```{r}
+gla_estimates <- gla_data_for_model %>% 
+  select(-GEOID, -median_value, -median_year_built) %>% 
+  st_drop_geometry()
+correlations <- correlate(dfw_estimates, method = "pearson")
+
+network_plot(correlations)
+
+vif(model1)
+```
+
+-   Model 2 with percent_ooh removed
+
+```{r}
+formula2 <- "sqrt(median_value) ~ median_rooms + pct_college + median_income + pct_foreign_born + pct_white + median_age + median_structure_age + pop_density + total_population"
+
+model2 <- lm(formula = formula2, data = gla_data_for_model)
+summary(model2)
+vif(model2)
+```
+
+#### PCA Time
+
+-   Let's try some dimensionality reduction
+
+```{r}
+pca <- prcomp(
+  formula = ~.,
+  data = gla_estimates,
+  scale. = TRUE,
+  center = TRUE
+)
+
+summary(pca)
+```
+
+-   Check pca loadings
+
+```{r}
+pca_tibble <- pca$rotation %>%
+  as_tibble(rownames = "predictor")
+
+pca_tibble
+
+pca_tibble %>%
+  select(predictor:PC5) %>%
+  pivot_longer(PC1:PC5, names_to = "component", values_to = "value") %>% 
+  ggplot(aes(x = value, y = predictor)) +
+  geom_col(fill = "darkgreen", color = "darkgreen", alpha = 0.5) +
+  facet_wrap(~component, nrow = 1) +
+  labs(y = NULL, x = "Value") +
+  theme_minimal()
+```
+
+```{r}
+components <- predict(pca, gla_estimates)
+
+gla_pca <- gla_data_for_model %>% 
+  select(GEOID, median_value) %>% 
+  cbind(components)
+
+ggplot(gla_pca, aes(fill = PC1)) +
+  geom_sf(color = NA) +
+  theme_void() +
+  scale_fill_viridis_c()
+```
+
+-   Let's fit the PCA regression
+
+```{r}
+pca_formula <- paste0("sqrt(median_value) ~ ",
+                      paste0('PC', 1:6, collapse = ' + '))
+
+pca_model <- lm(formula = pca_formula, data = gla_pca)
+
+summary(pca_model)
+
+```
+
+#### Model assessment for normality and other assumptions
+
+```{r}
+gla_data_for_model$residuals <- residuals(model2)
+
+ggplot(gla_data_for_model, aes(x = residuals)) +
+  geom_histogram(bins = 100, alpha = 0.5, color = "navy", fill = "navy") +
+  theme_minimal()
+```
+
+##### Spatial Autocorrelation
+
+-   Let's check the spatial autocorrelation
+
+```{r}
+weights <- gla_data_for_model %>% 
+  poly2nb() %>% 
+  nb2listw(zero.policy = TRUE)
+
+moran.test(gla_data_for_model$residuals, weights, zero.policy = TRUE)
+```
+
+-   some mild clustering. let's check the lagged residuals
+
+```{r}
+gla_data_for_model$lagged_residuals <- lag.listw(weights,
+                                                 gla_data_for_model$residuals, zero.policy = TRUE)
+
+ggplot(gla_data_for_model, aes(x = residuals, y = lagged_residuals)) +
+  theme_minimal() +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red")
+```
+
+-   the spatial autocorrelation seems much stronger than in Dallas-Fort Worth
+
+```{r}
+
+lag_model <- lagsarlm(
+  formula = formula2,
+  data = dfw_data_for_model,
+  listw = weights)
+
+lag_model %>% summary() %>% print(signif.stars = TRUE)
+```
+
+#### Spatial Lagged Regression
+
+```{r}
+lag_model <- lagsarlm(
+  formula = formula2,
+  data = gla_data_for_model,
+  listw = weights, zero.policy = TRUE,)
+
+lag_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
+```
+
+#### Spatial Error Regression
+
+```{r}
+error_model <- errorsarlm(
+  formula = formula2,
+  data = gla_data_for_model,
+  listw = weights, zero.policy = TRUE
+  )
+
+error_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
+```
+
+#### Picking bewtween the two
+
+```{r}
+moran.test(lag_model$residuals, weights, zero.policy = TRUE)
+
+moran.test(error_model$residuals, weights, zero.policy = TRUE)
+```
+
+```{r}
+lm.LMtests(
+  model2,
+  weights,
+  test = c("LMerr", "LMlag", "RLMerr", "RLMlag"), zero.policy = TRUE)
+```
+
+### Exercise 3
+
+Create a geodemographic classification for your region using the sample code in this chapter. Does the typology you've generated resemble that of Dallas-Fort Worth, or does it differ?
