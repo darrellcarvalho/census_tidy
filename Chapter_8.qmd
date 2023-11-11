@@ -682,10 +682,9 @@ ggplot(dfw_data_for_model, aes(x = residuals, y = lagged_residuals)) +
 lag_model <- lagsarlm(
   formula = formula2,
   data = dfw_data_for_model,
-  listw = weights,
-  Nagelkerke = TRUE)
+  listw = weights)
 
-lag_model %>% summary() %>% print(signif.stars = TRUE)
+lag_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
 ```
 
 -   The relationships seem similar, but parameters seem overall smaller (smaller effect size) when spatial lag is controlled for
@@ -1186,8 +1185,7 @@ Reproduce the regression modeling workflow outlined in this chapter for your cho
 #### Data Collection
 
 ```{r}
-gla_counties <- c("Ventura", "San Bernardino", "Riverside",
-                  "Los Angeles", "Orange")
+lam_counties <- c("Los Angeles", "Orange","San Bernardino", "Riverside")
 
 variables_to_get <- c(
   median_value = "B25077_001",
@@ -1202,29 +1200,31 @@ variables_to_get <- c(
   percent_ooh = "DP04_0046P"
   )
 
-gla_data <- get_acs(
+lam_tables <- get_acs(
   geography = "tract",
   variables = variables_to_get,
   state = "CA",
-  county = gla_counties,
-  geometry = TRUE,
+  county = lam_counties,
   output = "wide",
   year = 2020
   ) %>% 
-  select(-NAME) %>% 
-  st_transform(2229)
+  select(-NAME)
+
+lam_boundaries <- tracts("CA", lam_counties, cb = TRUE, year = 2020) %>% st_transform(3310)
+
+lam_data <- left_join(lam_boundaries,lam_tables, by = "GEOID") %>% select(!c(STATEFP:AFFGEOID, NAME:AWATER)) %>% filter(!GEOID %in% c("06037620101", "06037620001", "06037620002", "06037620102", "06037599100", "06037599000", "06037599100"))
 ```
 
 #### Checking the median home values
 
 ```{r}
-gla_map <- ggplot(gla_data, aes(fill = median_valueE)) +
+lam_map <- ggplot(lam_data, aes(fill = median_valueE)) +
   geom_sf(color = NA) +
   scale_fill_viridis_c(labels = scales::label_dollar()) +
   theme_void() +
   labs(fill = "median home value")
 
-gla_histogram <- ggplot(gla_data, aes(x = median_valueE)) +
+lam_histogram <- ggplot(lam_data, aes(x = median_valueE)) +
   geom_histogram(alpha = 0.5, fill = "navy", color = "navy",
                  bins = 100) +
   theme_minimal() +
@@ -1234,7 +1234,7 @@ gla_histogram <- ggplot(gla_data, aes(x = median_valueE)) +
     ) +
   labs(x = "Median home value ($)")
 
-gla_map + gla_histogram
+lam_map + lam_histogram
 ```
 
 #### Does LOG make them (more) normally distributed?
@@ -1246,7 +1246,7 @@ gla_map + gla_histogram
 -   check distribution under square root transform
 
 ```{r}
-x <- gla_data$median_valueE
+x <- lam_data$median_valueE
 hist(x)
 hist(log(x))
 hist(sqrt(x))
@@ -1257,26 +1257,26 @@ hist(sqrt(x))
 -   We map to verify
 
 ```{r}
-gla_map_sqrt <- ggplot(gla_data, aes(fill = sqrt(median_valueE))) + 
+lam_map_sqrt <- ggplot(lam_data, aes(fill = sqrt(median_valueE))) + 
   geom_sf(color = NA) + 
   scale_fill_viridis_c() + 
   theme_void() + 
   labs(fill = "Median home\nvalue sqrt")
 
-gla_histogram_sqrt <- ggplot(gla_data, aes(x = sqrt(median_valueE))) + 
+lam_histogram_sqrt <- ggplot(lam_data, aes(x = sqrt(median_valueE))) + 
   geom_histogram(alpha = 0.5, fill = "navy", color = "navy",
                  bins = 100) + 
   theme_minimal() + 
   scale_x_continuous() + 
   labs(x = "Median home value sqrt")
 
-gla_map_sqrt + gla_histogram_sqrt
+lam_map_sqrt + lam_histogram_sqrt
 ```
 
 -   Now we start model fitting
 
 ```{r}
-gla_data_for_model <- gla_data %>% 
+lam_data_for_model <- lam_data %>% 
   mutate(
     pop_density = 
       as.numeric(set_units(total_populationE / st_area(.),"1/km2")),
@@ -1291,14 +1291,14 @@ gla_data_for_model <- gla_data %>%
 ```{r}
 formula <- "sqrt(median_value) ~ median_rooms + pct_college + median_income + pct_foreign_born + pct_white + median_age + median_structure_age + percent_ooh + pop_density + total_population"
 
-model1 <- lm(formula = formula, data = gla_data_for_model)
+model1 <- lm(formula = formula, data = lam_data_for_model)
 summary(model1)
 ```
 
 -   Check for covariance across the variables
 
 ```{r}
-gla_estimates <- gla_data_for_model %>% 
+lam_estimates <- lam_data_for_model %>% 
   select(-GEOID, -median_value, -median_year_built) %>% 
   st_drop_geometry()
 correlations <- correlate(dfw_estimates, method = "pearson")
@@ -1313,7 +1313,7 @@ vif(model1)
 ```{r}
 formula2 <- "sqrt(median_value) ~ median_rooms + pct_college + median_income + pct_foreign_born + pct_white + median_age + median_structure_age + pop_density + total_population"
 
-model2 <- lm(formula = formula2, data = gla_data_for_model)
+model2 <- lm(formula = formula2, data = lam_data_for_model)
 summary(model2)
 vif(model2)
 ```
@@ -1325,7 +1325,7 @@ vif(model2)
 ```{r}
 pca <- prcomp(
   formula = ~.,
-  data = gla_estimates,
+  data = lam_estimates,
   scale. = TRUE,
   center = TRUE
 )
@@ -1352,13 +1352,13 @@ pca_tibble %>%
 ```
 
 ```{r}
-components <- predict(pca, gla_estimates)
+components <- predict(pca, lam_estimates)
 
-gla_pca <- gla_data_for_model %>% 
+lam_pca <- lam_data_for_model %>% 
   select(GEOID, median_value) %>% 
   cbind(components)
 
-ggplot(gla_pca, aes(fill = PC1)) +
+ggplot(lam_pca, aes(fill = PC1)) +
   geom_sf(color = NA) +
   theme_void() +
   scale_fill_viridis_c()
@@ -1370,7 +1370,7 @@ ggplot(gla_pca, aes(fill = PC1)) +
 pca_formula <- paste0("sqrt(median_value) ~ ",
                       paste0('PC', 1:6, collapse = ' + '))
 
-pca_model <- lm(formula = pca_formula, data = gla_pca)
+pca_model <- lm(formula = pca_formula, data = lam_pca)
 
 summary(pca_model)
 
@@ -1379,9 +1379,9 @@ summary(pca_model)
 #### Model assessment for normality and other assumptions
 
 ```{r}
-gla_data_for_model$residuals <- residuals(model2)
+lam_data_for_model$residuals <- residuals(model2)
 
-ggplot(gla_data_for_model, aes(x = residuals)) +
+ggplot(lam_data_for_model, aes(x = residuals)) +
   geom_histogram(bins = 100, alpha = 0.5, color = "navy", fill = "navy") +
   theme_minimal()
 ```
@@ -1391,20 +1391,20 @@ ggplot(gla_data_for_model, aes(x = residuals)) +
 -   Let's check the spatial autocorrelation
 
 ```{r}
-weights <- gla_data_for_model %>% 
-  poly2nb() %>% 
-  nb2listw(zero.policy = TRUE)
+weights <- lam_data_for_model %>%
+  poly2nb(snap = 1000) %>% 
+  nb2listw()
 
-moran.test(gla_data_for_model$residuals, weights, zero.policy = TRUE)
+moran.test(lam_data_for_model$residuals, weights)
 ```
 
 -   some mild clustering. let's check the lagged residuals
 
 ```{r}
-gla_data_for_model$lagged_residuals <- lag.listw(weights,
-                                                 gla_data_for_model$residuals, zero.policy = TRUE)
+lam_data_for_model$lagged_residuals <- lag.listw(weights,
+                                                 lam_data_for_model$residuals)
 
-ggplot(gla_data_for_model, aes(x = residuals, y = lagged_residuals)) +
+ggplot(lam_data_for_model, aes(x = residuals, y = lagged_residuals)) +
   theme_minimal() +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", color = "red")
@@ -1412,23 +1412,13 @@ ggplot(gla_data_for_model, aes(x = residuals, y = lagged_residuals)) +
 
 -   the spatial autocorrelation seems much stronger than in Dallas-Fort Worth
 
-```{r}
-
-lag_model <- lagsarlm(
-  formula = formula2,
-  data = dfw_data_for_model,
-  listw = weights)
-
-lag_model %>% summary() %>% print(signif.stars = TRUE)
-```
-
 #### Spatial Lagged Regression
 
 ```{r}
 lag_model <- lagsarlm(
   formula = formula2,
-  data = gla_data_for_model,
-  listw = weights, zero.policy = TRUE,)
+  data = lam_data_for_model,
+  listw = weights)
 
 lag_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
 ```
@@ -1438,28 +1428,88 @@ lag_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
 ```{r}
 error_model <- errorsarlm(
   formula = formula2,
-  data = gla_data_for_model,
-  listw = weights, zero.policy = TRUE
-  )
+  data = lam_data_for_model,
+  listw = weights)
 
 error_model %>% summary(Nagelkerke = TRUE) %>% print(signif.stars = TRUE)
 ```
 
-#### Picking bewtween the two
+#### Picking between the two
 
 ```{r}
-moran.test(lag_model$residuals, weights, zero.policy = TRUE)
+moran.test(lag_model$residuals, weights)
 
-moran.test(error_model$residuals, weights, zero.policy = TRUE)
+moran.test(error_model$residuals, weights)
 ```
 
 ```{r}
 lm.LMtests(
   model2,
   weights,
-  test = c("LMerr", "LMlag", "RLMerr", "RLMlag"), zero.policy = TRUE)
+  test = c("LMerr", "LMlag", "RLMerr", "RLMlag"))
 ```
 
 ### Exercise 3
 
 Create a geodemographic classification for your region using the sample code in this chapter. Does the typology you've generated resemble that of Dallas-Fort Worth, or does it differ?
+
+```{r}
+set.seed(1983)
+
+lam_kmeans <- lam_pca %>% 
+  st_drop_geometry() %>% 
+  select(PC1:PC6) %>% 
+  kmeans(centers = 6)
+
+table(lam_kmeans$cluster)
+
+lam_clusters <- lam_pca %>% 
+  mutate(cluster = as.character(lam_kmeans$cluster))
+
+
+
+cluster_map <- ggplot(lam_clusters, aes(fill = cluster)) +
+  geom_sf(size = 0.01) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void() +
+  labs(fill = "Cluster")
+
+ggplotly(cluster_map) %>% 
+  layout(legend = list(orientation = "h", y = -0.15,
+                       x = 0.2, title = "Cluster"))
+```
+
+```{r}
+input_vars <- lam_pca %>% 
+  select(PC1:PC6) %>% 
+  st_drop_geometry() %>% 
+  as.data.frame()
+
+skater_nbrs <- poly2nb(lam_pca, queen = FALSE, snap = 1000)
+costs <- nbcosts(skater_nbrs, input_vars)
+skater_weights <- nb2listw(skater_nbrs, costs, style = "B")
+```
+
+```{r}
+mst <- mstree(skater_weights)
+
+regions <- skater(
+  mst[,1:2], # the nodes extracted from the mstree matrix
+  input_vars, # our principal components
+  ncuts = 7, # how many times to prune
+  crit = 10 # minimum observations per group
+  )
+```
+
+```{r}
+lam_clusters$region <- as.character(regions$group)
+
+lam_clusters2 <- lam_clusters
+
+cluster_map <- ggplot(lam_clusters2, aes(fill = region)) +
+  geom_sf(size = 0.01) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_void() +
+  labs(fill = "region")
+ggplotly(cluster_map)
+```
