@@ -1,0 +1,39 @@
+---
+title: "Chapter 9 Notes"
+prefer-html: true
+format: 
+  docx: 
+    toc: true
+    highlight-style: arrow
+    fig-format: retina
+    fig-dpi: 300
+    fig-height: 6
+    fig-width: 6
+editor: visual
+execute:
+  echo: fenced
+  error: true
+  output: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Introduction to Census Microdata
+
+## What is "microdata?"
+
+-   "individual-level data made available to researchers"
+
+    -   anonymised
+
+    -   detailed
+
+    -   Released for Census and ACS
+
+-   ACS PUMS is available in 1 and 5 year vintages
+
+    -   1 year covers 1% of US pop
+
+    -   5 year covers 5% of US pop
+
+    -   

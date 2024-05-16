@@ -744,7 +744,7 @@ moran.test(error_model$residuals, weights)
 -   We can also check using *Lagrange multiply tests* to "check for spatial error dependence, whether a spatially lagged dependent variable is missing, and the robustness of each in the presence of each other."
 
 ```{r}
-lm.LMtests(
+lm.RStests(
   model2,
   weights,
   test = c("LMerr", "LMlag", "RLMerr", "RLMlag")
@@ -1143,7 +1143,8 @@ lbarea_tracts_seg %>%
   #coord_sf(crs = 26946) +
   scale_fill_viridis_c(option = "inferno") +
   theme_void() +
-  labs(fill = "Local\nsegregation index")
+  labs(fill = "Local\nsegregation\nindex",
+       title = "Index of segregat")
 ```
 
 #### Computing a local Diversity Gradient
