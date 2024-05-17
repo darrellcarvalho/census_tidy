@@ -339,16 +339,16 @@ tm_shape(hennepin_black) +
     -   difficult to discern diversity of areas
 
 ```{r hennepin-facet}
-tm_shape(hennepin_race) +
-  tm_facets(by = "variable", scale.factor = 4) +
-  tm_fill(col = "percent",
-          style = "quantile",
-          n = 6,
-          palette = "Blues",
-          title = "Percent (2020 US Census)",) +
-  tm_layout(bg.color = "grey",
-            legend.position = c(-0.7, 0.15),
-            panel.label.bg.color = "white")
+# tm_shape(hennepin_race) +
+#   tm_facets(by = "variable", scale.factor = 4) +
+#   tm_fill(col = "percent",
+#           style = "quantile",
+#           n = 6,
+#           palette = "Blues",
+#           title = "Percent (2020 US Census)") +
+#   tm_layout(bg.color = "grey",
+#             legend.position = c(-0.7, 0.15),
+#             panel.label.bg.color = "white")
 ```
 
 -   Dot-density maps randomly place dots in polygons
