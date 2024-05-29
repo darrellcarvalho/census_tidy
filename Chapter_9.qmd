@@ -36,4 +36,70 @@ editor_options:
 
     -   5 year covers 5% of US pop
 
-    -   
+### IPUMS
+
+-   Project out of University of Minnesota, world's largest population database
+
+    -   Directed by Steven Ruggles
+
+    -   Split into IPUMS-USA and IPUMS-International
+
+    -   Also includes IPUMS National Historical Geographic Information System, and IPUMS Current Population Survey
+
+-   Microdata released by IPUMS is *harmonized*
+
+    -   This means they are provided in consistent geographic units across sample years to facilitate longitudinal comparison
+
+-   Microdata is also *regionalized*
+
+    -   This means units with \< 20,000 people are aggregated with neighboring units for privacy and confidentiality
+
+-   IPUMS data can be accessed through **ipumsr** in r, through the IPUMS website, or through the IPUMS API
+
+    -   More coverage provided in Chapter 11
+
+### Microdata and the Census API
+
+-   Microdata queryable through Census MDAT tool
+
+    -   flat file downloads
+
+    -   Allows API Queries
+
+## Using microdata in tidycensus
+
+-   We can ACS data through **tidycensus** using `get_pums()`
+
+    -   The data returned by `get_pums()` is individual-level records, rather than aggregates
+
+### Basic usage of `get_pums()`
+
+-   Specify 1+ variable(s) and state
+
+    -   If performing national-level analyses, `state = 'all'` is available, but slow
+
+-   `get_pums()` defaults to 5-year; change survey with, e.g., `source = "acs1"`
+
+    -   1 year range covers 2006-2019 at time of book writing; 5 year covers 2016-2020
+
+#### Example: Wyoming 1-year 2019
+
+-   We're getting the following variables:
+
+    -   `"SEX"` = sex
+
+    -   `"AGEP"` = age
+
+    -   `"HHT"` = household type
+
+```{r wyoming-example}
+library(tidycensus)
+
+wy_pums <- get_pums(
+  variables = c("SEX", "AGEP", "HHT"),
+  state = "WY",
+  survey = "acs1",
+  year = 2019,
+  show_call = TRUE
+)
+```
